@@ -86,6 +86,30 @@ def close_page(sess, pid):
         log(f"关闭页面 {pid} 失败（忽略）: {str(e)[:80]}")
 
 
+def close_stale_rank_pages(sess):
+    """关闭上一次运行遗留的榜单页，避免每天累积一个标签。
+
+    只关 URL 含 /shop/chance/rank-product 的页面——正是本工作流自己产出的页面。
+    这些页面属于历史连接，当前连接无法接管（has no attached session），
+    所以直接关掉再新开。
+    """
+    try:
+        text = sess.call("tabs", {"action": "list"})
+    except RuntimeError:
+        return
+    stale = []
+    for line in text.split("\n"):
+        if "/shop/chance/rank-product" not in line:
+            continue
+        m = re.match(r"\[(\d+)\]", line.strip())
+        if m:
+            stale.append(int(m.group(1)))
+    if stale:
+        log(f"清理上次遗留的榜单页: {stale}")
+    for pid in stale:
+        close_page(sess, pid)
+
+
 def js_eval(sess, page, func):
     """在页面执行 JS 函数，返回其 JSON 字符串结果（剥掉 untrusted 标记）。
 
@@ -212,8 +236,8 @@ def read_state(sess, page):
 def main():
     import argparse
     ap = argparse.ArgumentParser(description="自动进入抖店电商罗盘短视频榜单目标页")
-    ap.add_argument("--keep-open", action="store_true",
-                    help="运行结束后保留浏览器页面（调试/人工核对用，默认自动关闭）")
+    ap.add_argument("--close-after", action="store_true",
+                    help="运行结束后关闭页面（默认保留，便于直接查看榜单）")
     ap.add_argument("--skip-login", action="store_true",
                     help="跳过登录入口（浏览器已登录时更快）")
     args = ap.parse_args()
@@ -226,10 +250,13 @@ def main():
 
     pid = None
     try:
+        # 0. 清掉上次运行遗留的榜单页，避免标签累积
+        close_stale_rank_pages(sess)
+
         # 1. 登录抖店后台（复用已验证的登录入口 + 登录态探测）
         if not args.skip_login:
             dex.visit_login_entry(sess, DEFAULT_LOGIN_URL)
-        dex.ensure_login(sess, DEFAULT_LOGIN_URL)
+        probe_pid = dex.ensure_login(sess, DEFAULT_LOGIN_URL)
 
         # 2. 直达罗盘短视频榜单页
         log(f"直达榜单页: {RANK_URL}")
@@ -240,6 +267,10 @@ def main():
         pid = int(m.group(1))
         time.sleep(8)
         log(f"榜单页 page id = {pid}")
+
+        # 登录探测用的商品管理页用完即关，避免每天多留一个标签
+        if probe_pid and probe_pid != pid:
+            close_page(sess, probe_pid)
 
         # 3. 选「短视频榜」tab
         if not is_tab_selected(sess, pid, "短视频榜"):
@@ -266,9 +297,13 @@ def main():
 
         print(f"RESULT_PAGE={pid}")
         print(f"RESULT_URL={RANK_URL}")
+        print("RESULT_STATE=" + json.dumps(
+            {"短视频榜": bool(st.get("shortVideoTab", {}).get("active")),
+             "非知名品牌": bool(st.get("brandUnknown", {}).get("active")),
+             "类目": st.get("category")}, ensure_ascii=False))
     finally:
-        # 关闭本次新开的罗盘页面（保留用户原有页面）
-        if pid is not None and not args.keep_open:
+        # 默认保留页面，便于用户直接查看；--close-after 时才关闭
+        if pid is not None and args.close_after:
             close_page(sess, pid)
 
 
