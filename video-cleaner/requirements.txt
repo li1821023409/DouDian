@@ -1,0 +1,13 @@
+# 抖音水印清除工具 —— Python 依赖
+# 安装：.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+numpy>=2.0
+opencv-python-headless>=4.10
+
+# 备用 CPU 推理后端（DirectML 版，Windows 自带 GPU 加速）
+onnxruntime-directml>=1.20
+
+# GPU 推理（CUDA 12.6 版，约 2.6GB）
+# 国内镜像：https://mirrors.aliyun.com/pytorch-wheels/cu126/
+#   torch-2.10.0+cu126-cp313-cp313-win_amd64.whl
+torch==2.10.0+cu126

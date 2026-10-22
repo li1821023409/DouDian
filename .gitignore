@@ -19,8 +19,17 @@ desktop.ini
 *.swp
 .vscode/
 
-# 本地视频/图像处理工具（含 ffmpeg、模型权重、虚拟环境，体积达数 GB，不纳入版本管理）
-video-cleaner/
+# 视频处理工具（video-cleaner）：代码、模板、说明纳入版本管理；
+# 下列运行时依赖体积达 5GB，换机时按 README 重新部署即可，不纳入。
+video-cleaner/.venv/
+video-cleaner/tools/
+video-cleaner/input/
+video-cleaner/output/
+video-cleaner/frames/
+video-cleaner/models/*.pt
+video-cleaner/models/*.onnx
+video-cleaner/models/big-lama/
+video-cleaner/**/__pycache__/
 
 # 下载的带货短视频（每个商品一个文件夹，体积大且随时清空重下）
 带货短视频/
