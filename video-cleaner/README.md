@@ -23,9 +23,41 @@ D:\Data\DouDian\video-cleaner\
 │   ├── sheet.py          生成水印位置联系表
 │   └── download_multi.py 多线程下载器
 ├── .venv\            Python 虚拟环境（已装 opencv / onnxruntime）
+├── setup_env.py      换机后一键重建运行环境
 ├── run.bat           一键运行
 └── README.md         本文件
 ```
+
+---
+
+## 一之二、换机 / 重装后怎么恢复
+
+项目用 git 管理，但**不包含**下列内容——它们合计约 5GB，且全部可以从代码和公开源重建：
+
+| 内容 | 体积 | 恢复方式 |
+|---|---|---|
+| `.venv/` | 4.3G | `setup_env.py` 自动创建并装依赖 |
+| `tools/`（ffmpeg） | 497M | `setup_env.py` 自动下载解压 |
+| `models/lama_fp32.onnx` | 208M | `setup_env.py` 从 hf-mirror 下载并校验 SHA256 |
+| `models/big-lama.pt` | 205M | **需从旧机器拷贝**（公开源只有原始 .ckpt） |
+| `input/` `output/` `frames/` | 93M | 测试素材与产物，无需恢复 |
+
+**一条命令补齐**：
+
+```bat
+D:\Install\Python\python.exe D:\Data\DouDian\video-cleaner\setup_env.py
+```
+
+脚本幂等，已存在的步骤自动跳过；最后会做一遍环境自检（opencv / numpy / torch / 模型 / ffmpeg）。
+
+**关于 `big-lama.pt`**：公开源（hf-mirror 的 `smartywu/big-lama`）只提供原始的
+`best.ckpt`，本工具用的是转好的 TorchScript 版本，所以这个文件只能从旧机器拷贝。
+没有它也能跑——`dewatermark.py` 会退回 ONNX(CPU) 后端，只是慢约 35 倍。
+
+**为什么这些不进 git**：GitHub 单文件上限 100MB，205MB 的 `big-lama.pt` 和 208MB 的
+`lama_fp32.onnx` 直接推不上去；`.venv` 含数万个小文件，git 按快照存储，每次依赖变动都会
+新增一份完整副本，仓库会从 1.2MB 涨到 5GB+，clone 和 status 都会变得很慢。
+如果用 Git LFS，5GB 也超出免费额度。所以代码走 git、依赖走重建脚本，是这里更合适的划分。
 
 ---
 
