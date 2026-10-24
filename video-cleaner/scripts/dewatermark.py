@@ -31,7 +31,7 @@ FFMPEG = BASE / "tools" / "ffmpeg-master-latest-win64-gpl" / "bin" / "ffmpeg.exe
 # 模板是"抖音号：xxx"文字行的小图（266x38），MASK_EXPAND 是它到整块水印的偏移
 MASK_EXPAND = (-12, -92, 12, 56)
 # 通用模板是「抖音号：」（126x34），整块水印相对它的偏移
-EXPAND_GENERIC = (8, -18, 165, 112)
+EXPAND_GENERIC = (8, -50, 165, 112)
 WIN = 512
 # 去水印成品的文件名后缀
 DEFAULT_SUFFIX = "_去水印版"
@@ -598,25 +598,30 @@ def process_video(src: Path, outdir: Path, backend, limit=0, trim_tail=0.0,
         ok, fr = cap.read()
         if not ok:
             break
-        boxes = []
+        # 主位置始终参与遮罩：逐帧检测到的位置可能是误检，如果只用它，
+        # 真正的水印位置反而会漏掉（实测彩色抖音 logo 就是这样被遗留的）。
+        boxes = list(main_boxes)
         if valid[i]:
             key = (int(xs[i]) // 12, int(ys[i]) // 12)
-            if key not in box_cache:
-                rb = refine_box(fr, (int(xs[i]), int(ys[i]))) if use_refine else None
-                box_cache[key] = rb if rb else mask_box_from_hit(xs[i], ys[i], W, H)
-                print(f"\n  mask[{key}] -> {box_cache[key]}"
-                      f"{' (自动精修)' if rb else ' (默认框)'}")
-            bx0, by0, bx1, by1 = box_cache[key]
-            if mask_scale != 1.0:
-                cx, cy = (bx0 + bx1) / 2, (by0 + by1) / 2
-                half = ((bx1 - bx0) * mask_scale / 2, (by1 - by0) * mask_scale / 2)
-                bx0, bx1 = int(cx - half[0]), int(cx + half[0])
-                by0, by1 = int(cy - half[1]), int(cy + half[1])
-            boxes.append((max(bx0, 0), max(by0, 0), min(bx1, W), min(by1, H)))
+            if key in main:
+                n_fallback += 1          # 与主位置重合，已由 main_boxes 覆盖
+            else:
+                # 该帧还有一个主位置之外的水印（多段拼接时常见），额外补遮
+                if key not in box_cache:
+                    rb = refine_box(fr, (int(xs[i]), int(ys[i]))) if use_refine else None
+                    box_cache[key] = rb if rb else mask_box_from_hit(xs[i], ys[i], W, H)
+                    print(f"\n  mask[{key}] -> {box_cache[key]}"
+                          f"{' (自动精修)' if rb else ' (默认框)'}")
+                bx0, by0, bx1, by1 = box_cache[key]
+                if mask_scale != 1.0:
+                    cx, cy = (bx0 + bx1) / 2, (by0 + by1) / 2
+                    half = ((bx1 - bx0) * mask_scale / 2, (by1 - by0) * mask_scale / 2)
+                    bx0, bx1 = int(cx - half[0]), int(cx + half[0])
+                    by0, by1 = int(cy - half[1]), int(cy + half[1])
+                boxes.append((max(bx0, 0), max(by0, 0), min(bx1, W), min(by1, H)))
         elif main_boxes:
-            # 这一帧模板没命中（背景太亮/太暗、水印被遮挡），但同一片子里主位置
-            # 已确认有水印，按主位置补遮，避免播放时水印时有时无。
-            boxes.extend(main_boxes)
+            # 这一帧模板没命中（背景太亮/太暗、水印被遮挡），按主位置补遮，
+            # 避免播放时水印时有时无。
             n_fallback += 1
 
         # @昵称 那种单独一行的半透明水印，位置通常在另一个角，单独出框
