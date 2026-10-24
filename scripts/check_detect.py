@@ -19,7 +19,7 @@ def main():
     det = WatermarkDetector(TPL_GENERIC)
     files = [f for f in sorted(glob.glob(str(ROOT / "*" / "*.mp4")))
              if "_clean" not in os.path.basename(f)]
-    print(f"共 {len(files)} 个原片，阈值 0.40\n")
+    print(f"共 {len(files)} 个原片，阈值 {det.thresh}\n")
     print(f"{'商品':<14}{'文件':<9}{'分辨率':<14}{'分数':<8}{'位置':<14}判定")
     print("-" * 72)
     bad = []
@@ -42,7 +42,7 @@ def main():
             print(f"{os.path.basename(os.path.dirname(f))[:12]:<14}{os.path.basename(f):<9}读取失败")
             continue
         best = max(scores)
-        ok = best >= 0.40
+        ok = best >= det.thresh
         name = os.path.basename(os.path.dirname(f))[:12]
         pos = str(poss[scores.index(best)])
         print(f"{name:<14}{os.path.basename(f):<9}{w}x{h:<9}{best:<8.2f}{pos:<14}{'OK' if ok else '✗ 未识别'}")

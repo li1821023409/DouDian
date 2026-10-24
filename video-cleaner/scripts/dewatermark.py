@@ -31,7 +31,7 @@ FFMPEG = BASE / "tools" / "ffmpeg-master-latest-win64-gpl" / "bin" / "ffmpeg.exe
 # 模板是"抖音号：xxx"文字行的小图（266x38），MASK_EXPAND 是它到整块水印的偏移
 MASK_EXPAND = (-12, -92, 12, 56)
 # 通用模板是「抖音号：」（126x34），整块水印相对它的偏移
-EXPAND_GENERIC = (0, -78, 160, 55)
+EXPAND_GENERIC = (8, -18, 165, 112)
 WIN = 512
 # 去水印成品的文件名后缀
 DEFAULT_SUFFIX = "_去水印版"
@@ -39,12 +39,22 @@ LEGACY_SUFFIX = "_clean"
 
 
 # ---------------------------------------------------------------- 检测
+def corner_hit(x, y, W, H):
+    """水印只出现在画面四角。画面中部的命中基本都是误检（手指、衣料、随机文字），
+    实测阈值 0.4 时 31 个视频里有 21 个是这种误检，会把画面中间乱修一通。"""
+    near_top = y < H * 0.30
+    near_bottom = y > H * 0.55
+    near_left = x < W * 0.30
+    near_right = x > W * 0.45
+    return (near_top or near_bottom) and (near_left or near_right)
+
+
 class WatermarkDetector:
     """白度图 + 多尺度模板匹配。抖音水印是半透明白色叠加，min(R,G,B) 响应最强。"""
 
     SCALES = (0.86, 0.90, 0.94, 0.97, 1.0, 1.03, 1.06, 1.10, 1.14)
 
-    def __init__(self, template_path=TEMPLATE):
+    def __init__(self, template_path=TEMPLATE, thresh=0.62):
         img = cv2.imread(str(template_path))
         if img is None:
             raise FileNotFoundError(f"模板图不存在: {template_path}")
@@ -54,6 +64,7 @@ class WatermarkDetector:
             t = cv2.resize(tpl, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
             self.templates.append((s, t))
         self.base_h, self.base_w = tpl.shape
+        self.thresh = thresh
         self.scores = []
 
     def _verify(self, frame, x, y, w, h):
@@ -83,8 +94,14 @@ class WatermarkDetector:
                 by = int(round(loc[1] / s))
                 best = (mx, bx, by, s)
         score, x, y, s = best
-        if score >= 0.40 and not self._verify(frame, x, y, self.base_w, self.base_h):
-            score *= 0.4   # 结构不符，压到阈值以下
+        if score < self.thresh:
+            self.scores.append(score)
+            return x, y, score, s
+        # 位置不对（画面中部）→ 直接判误检，压到阈值以下
+        if not corner_hit(x, y, frame.shape[1], frame.shape[0]):
+            score *= 0.35
+        elif not self._verify(frame, x, y, self.base_w, self.base_h):
+            score *= 0.5   # 位置对但结构不符（下方没有「抖音号」白字行）
         self.scores.append(score)
         return x, y, score, s
 
@@ -490,7 +507,7 @@ def process_video(src: Path, outdir: Path, backend, limit=0, trim_tail=0.0,
     if at_sym_det is None:
         at_sym_scores, at_sym_hits = [0.0] * n, [(0, 0, 0, 0)] * n
     det_cost = time.time() - t0
-    xs, ys, valid = smooth_positions(hits, scores)
+    xs, ys, valid = smooth_positions(hits, scores, thresh=det.thresh)
     print(f"\n  检测耗时 {det_cost:.1f}s，有效水印帧 {int(valid.sum())}/{n}"
           f"，位置集合 {sorted(set(map(tuple, np.unique(np.c_[xs, ys], axis=0))))[:6]}")
 
@@ -514,13 +531,14 @@ def process_video(src: Path, outdir: Path, backend, limit=0, trim_tail=0.0,
     # ★ 先判识别率，再谈截尾。否则全部未命中时下面的截尾会把整条片子退到 0 帧，
     #   输出一个空壳文件（--replace 模式下还会毁掉原片）。
     n_valid = int(valid.sum())
-    if n_valid < max(1, int(n * 0.30)):
-        print(f"  [跳过] 有效水印帧仅 {n_valid}/{n}（<30%），模板未匹配，保留原片不动")
+    if n_valid < max(8, int(n * 0.15)):
+        print(f"  [跳过] 有效水印帧仅 {n_valid}/{n}（<15%），模板未匹配，保留原片不动")
         return None
 
     cnt = Counter(keys[i] for i in range(n) if valid[i])
+    main = set()
     if cnt:
-        th = max(8, int(n * 0.04))
+        th = max(8, int(n * 0.15))
         main = {k for k, c in cnt.items() if c >= th}
         cut = n
         for i in range(n - 1, -1, -1):
@@ -537,7 +555,7 @@ def process_video(src: Path, outdir: Path, backend, limit=0, trim_tail=0.0,
         print(f"  过滤后有效帧 {int(valid.sum())}/{n}，主位置 {sorted(main)}")
 
     # 兜底：截尾后仍需有足够多的有效帧，且不能为 0
-    if n < 2 or int(valid.sum()) < max(1, int(n * 0.30)):
+    if n < 2 or int(valid.sum()) < max(8, int(n * 0.15)):
         print(f"  [跳过] 截尾后有效帧 {int(valid.sum())}/{n} 不足，保留原片不动")
         return None
 
@@ -557,10 +575,21 @@ def process_video(src: Path, outdir: Path, backend, limit=0, trim_tail=0.0,
     cap = cv2.VideoCapture(str(src))
     t0 = time.time()
     box_cache = {}
+    # 主位置的遮罩框。抖音水印在一条片子里位置固定，但模板匹配会因背景明暗在
+    # 部分帧失效（实测同一视频只有 28% 帧能命中）。只看命中帧去修，剩下的帧水印
+    # 会原样留着，播放时一眼就能看到。所以未命中的帧也按主位置补遮。
+    main_boxes = []
+    for k in sorted(main):
+        mx, my = int(k[0]) * 12, int(k[1]) * 12
+        main_boxes.append(mask_box_from_hit(mx, my, W, H))
+    if main_boxes:
+        print(f"  主位置 {len(main_boxes)} 个：{main_boxes}")
+        print(f"  未命中的帧也将按主位置补遮（保证全片水印一致清除）")
     at_pad = 12
     n_at_fixed = 0
     n_at_sym = 0
     n_extra = 0
+    n_fallback = 0
     extra_list = parse_extra_masks(extra_masks, W, H, fps)
     if extra_list:
         print(f"  补遮区 {len(extra_list)} 个: "
@@ -584,6 +613,11 @@ def process_video(src: Path, outdir: Path, backend, limit=0, trim_tail=0.0,
                 bx0, bx1 = int(cx - half[0]), int(cx + half[0])
                 by0, by1 = int(cy - half[1]), int(cy + half[1])
             boxes.append((max(bx0, 0), max(by0, 0), min(bx1, W), min(by1, H)))
+        elif main_boxes:
+            # 这一帧模板没命中（背景太亮/太暗、水印被遮挡），但同一片子里主位置
+            # 已确认有水印，按主位置补遮，避免播放时水印时有时无。
+            boxes.extend(main_boxes)
+            n_fallback += 1
 
         # @昵称 那种单独一行的半透明水印，位置通常在另一个角，单独出框
         if at_det is not None and at_scores[i] >= at_det.thresh:
