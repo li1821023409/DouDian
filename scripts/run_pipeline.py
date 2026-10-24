@@ -95,7 +95,11 @@ def main():
     if not args.skip_open:
         steps.append(([PY_SYS, str(SCRIPTS / "compass_video_rank.py")], "① 打开罗盘短视频榜页面"))
     if not args.skip_fetch:
-        steps.append(([PY_SYS, str(SCRIPTS / "fetch_rank.py")], "② 抓取榜单商品与视频直链"))
+        # 抓取前必须确认插件生效，否则会抓到 0 个商品、后续全部白跑
+        steps.append(([PY_SYS, str(SCRIPTS / "ensure_extension.py")],
+                      "①.5 检查晓风插件（未生效则自动重新加载）"))
+        steps.append(([PY_SYS, str(SCRIPTS / "fetch_rank.py")],
+                      "② 抓取榜单商品与视频直链"))
     steps.append(([PY_SYS, str(SCRIPTS / "download_rank_videos.py"),
                    "--from", str(lo), "--to", str(hi), "--workers", str(args.workers)],
                   f"③ 下载{span}的短视频（按商品名建文件夹）"))
