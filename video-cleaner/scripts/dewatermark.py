@@ -581,7 +581,15 @@ def process_video(src: Path, outdir: Path, backend, limit=0, trim_tail=0.0,
     main_boxes = []
     for k in sorted(main):
         mx, my = int(k[0]) * 12, int(k[1]) * 12
-        main_boxes.append(mask_box_from_hit(mx, my, W, H))
+        box = mask_box_from_hit(mx, my, W, H)
+        # 贴底的遮罩直接吃掉整行：紧邻水印的「广告创意呈现/非医疗建议」小字
+        # 本来就会被遮住一部分，与其留半截模糊残影，不如整行一起移除
+        # （水印和它垂直距离不足 100px，矩形遮罩无法只取其一）。
+        # 不贴底的遮罩保持原样，画面内容不动。
+        if box[3] >= H - 8:
+            print(f"  贴底遮罩 {box} → 扩展为整行 (0,{box[1]},{W},{H})，一并移除底部说明小字")
+            box = (0, box[1], W, H)
+        main_boxes.append(box)
     if main_boxes:
         print(f"  主位置 {len(main_boxes)} 个：{main_boxes}")
         print(f"  未命中的帧也将按主位置补遮（保证全片水印一致清除）")
