@@ -15,6 +15,7 @@
     D:\\Install\\Python\\python.exe scripts\\ensure_extension.py
 退出码：0 正常 / 2 插件源缺失 / 3 服务未启动 / 4 无榜单页 / 5 加载失败 / 6 注入失败
 """
+import argparse
 import importlib.util
 import json
 import re
@@ -111,6 +112,13 @@ def run_fix():
 
 
 def main():
+    ap = argparse.ArgumentParser(description="确保晓风插件已加载并注入")
+    ap.add_argument("--load", action="store_true",
+                    help="只确保扩展已加载，不碰页面（不刷新，不会重置榜单 tab）")
+    ap.add_argument("--check", action="store_true",
+                    help="只检查页面是否注入，不尝试修复")
+    args = ap.parse_args()
+
     print("=== 晓风插件检查 ===")
 
     # 1. 插件源是否在（判断"装没装"）
@@ -130,6 +138,16 @@ def main():
         print("  先启动 BrowserOS neo，再重试。")
         return 3
     print(f"✓ CDP 可用：{browser}")
+
+    # ---- --load：只加载扩展，不碰页面 ----
+    # 用于流水线第一步：扩展加载好之后，compass_video_rank 新开的页面会自动注入，
+    # 不需要刷新，也就不会把「短视频榜」重置回「总榜」。
+    if args.load:
+        if not run_fix():
+            print("✗ 扩展加载失败")
+            return 5
+        print("✓ 扩展已加载（后续新开的页面会自动注入）")
+        return 0
 
     try:
         cvr = load_cvr()
@@ -155,8 +173,17 @@ def main():
         print("✓ 插件已生效，无需处理")
         return 0
 
-    # 4. 源在但没注入 → 重新挂载 + 刷新
+    # ---- --check：只报告，不修复 ----
+    if args.check:
+        print("✗ 插件未注入")
+        print("  注意：不要在这里刷新页面——刷新会把榜单 tab 重置回「总榜」，")
+        print("        导致抓取到 0 个视频。正确做法是重跑「打开页面」步骤，新开一个页面。")
+        return 6
+
+    # 4. 默认模式（人工排查用）：源在但没注入 → 重新挂载 + 刷新
     print("! 插件源存在但页面未注入，判定为「重启后被拦截」，开始修复")
+    print("  提示：本模式会刷新页面，刷新后榜单 tab 会回到「总榜」，")
+    print("        之后需要重跑 compass_video_rank.py 重新切到「短视频榜」。")
     if not run_fix():
         print("✗ 扩展重新加载失败")
         print("  人工处理：chrome://extensions → 开启开发者模式 → 加载未打包的扩展程序")
@@ -165,14 +192,15 @@ def main():
 
     reload_page(sess, pid)
     st = probe(sess, pid)
-    print(f"  刷新后：表格 {st['rows']} 行，插件属性 {st['items']} 个")
+    print(f"  刷新后：表格 {st['rows']} 行，插件属性 {st['items']} 个，tab：{st.get('tab') or '未知'}")
     if st["items"] > 0:
         print("✓ 修复成功，插件已生效")
+        print("  提醒：页面 tab 可能已回到「总榜」，跑抓取前需重新执行 compass_video_rank.py。")
         return 0
 
     print("✗ 重新加载并刷新后仍未注入")
     print("  可能原因：插件版本与当前浏览器不兼容，或 manifest 被改坏")
-    print(f"  人工检查：chrome://extensions 里「晓风运营插件」是否为「已启用」")
+    print("  人工检查：chrome://extensions 里「晓风运营插件」是否为「已启用」")
     return 6
 
 

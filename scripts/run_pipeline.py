@@ -92,12 +92,18 @@ def main():
     if args.clean:
         steps.append(([PY_SYS, str(SCRIPTS / "clean_output.py"), "--yes"], "⓪ 清空输出目录"))
 
+    # ⓪.5 先把扩展加载好（不碰页面、不刷新）
+    # 顺序很关键：必须在「打开页面」之前完成，新开的页面会自动注入；
+    # 若放到打开页面之后修复，就不得不刷新页面，而刷新会把榜单 tab
+    # 重置回「总榜」，抓取时视频数为 0。
+    steps.append(([PY_SYS, str(SCRIPTS / "ensure_extension.py"), "--load"],
+                  "⓪.5 确保晓风扩展已加载"))
+
     if not args.skip_open:
         steps.append(([PY_SYS, str(SCRIPTS / "compass_video_rank.py")], "① 打开罗盘短视频榜页面"))
     if not args.skip_fetch:
-        # 抓取前必须确认插件生效，否则会抓到 0 个商品、后续全部白跑
-        steps.append(([PY_SYS, str(SCRIPTS / "ensure_extension.py")],
-                      "①.5 检查晓风插件（未生效则自动重新加载）"))
+        steps.append(([PY_SYS, str(SCRIPTS / "ensure_extension.py"), "--check"],
+                      "①.5 验证插件已注入（只检查，不刷新）"))
         steps.append(([PY_SYS, str(SCRIPTS / "fetch_rank.py")],
                       "② 抓取榜单商品与视频直链"))
     steps.append(([PY_SYS, str(SCRIPTS / "download_rank_videos.py"),
