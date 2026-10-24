@@ -538,7 +538,7 @@ def process_video(src: Path, outdir: Path, backend, limit=0, trim_tail=0.0,
     cnt = Counter(keys[i] for i in range(n) if valid[i])
     main = set()
     if cnt:
-        th = max(8, int(n * 0.15))
+        th = max(4, int(n * 0.05))
         main = {k for k, c in cnt.items() if c >= th}
         cut = n
         for i in range(n - 1, -1, -1):
