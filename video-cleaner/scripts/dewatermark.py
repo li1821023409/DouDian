@@ -578,21 +578,34 @@ def process_video(src: Path, outdir: Path, backend, limit=0, trim_tail=0.0,
     # 主位置的遮罩框。抖音水印在一条片子里位置固定，但模板匹配会因背景明暗在
     # 部分帧失效（实测同一视频只有 28% 帧能命中）。只看命中帧去修，剩下的帧水印
     # 会原样留着，播放时一眼就能看到。所以未命中的帧也按主位置补遮。
-    main_boxes = []
+    # 每个主位置记录"出现时段 + 遮罩框"。只在该时段补遮，不要全片一刀切：
+    # 多场景拼接时，A 场景左上角是水印，B 场景同一位置可能是正常文字（如批准文号），
+    # 全片补遮会把 B 场景的字也糊掉。
+    main_meta = []
     for k in sorted(main):
-        mx, my = int(k[0]) * 12, int(k[1]) * 12
-        box = mask_box_from_hit(mx, my, W, H)
-        # 贴底的遮罩直接吃掉整行：紧邻水印的「广告创意呈现/非医疗建议」小字
-        # 本来就会被遮住一部分，与其留半截模糊残影，不如整行一起移除
-        # （水印和它垂直距离不足 100px，矩形遮罩无法只取其一）。
-        # 不贴底的遮罩保持原样，画面内容不动。
+        fs = [i for i in range(n) if valid[i] and keys[i] == k]
+        if not fs:
+            continue
+        box = mask_box_from_hit(int(k[0]) * 12, int(k[1]) * 12, W, H)
         if box[3] >= H - 8:
-            print(f"  贴底遮罩 {box} → 扩展为整行 (0,{box[1]},{W},{H})，一并移除底部说明小字")
-            box = (0, box[1], W, H)
-        main_boxes.append(box)
-    if main_boxes:
-        print(f"  主位置 {len(main_boxes)} 个：{main_boxes}")
-        print(f"  未命中的帧也将按主位置补遮（保证全片水印一致清除）")
+            # 水印纵向位置在不同分段会浮动（实测 y 从 1000 到 1200 都有），
+            # 贴底时统一从 H-280 起，覆盖位置更高的那些场景。
+            new_y0 = min(box[1], H - 280)
+            print(f"  贴底遮罩 {box} → 整行 (0,{new_y0},{W},{H})，底部说明小字一并移除")
+            box = (0, new_y0, W, H)
+        # 出现得多的位置按全片处理：检测本身不稳（这条片子 28% 命中），
+        # 出现范围会被截断，严格按时段反而漏掉后面的场景。
+        # 只在局部零星出现的位置才限制时段，避免误伤其他场景的正常内容。
+        ratio = len(fs) / max(n, 1)
+        if ratio >= 0.15:
+            f0, f1 = 0, n - 1
+            note = f"全片（出现率 {ratio*100:.0f}%）"
+        else:
+            pad = int(n * 0.2)
+            f0, f1 = max(0, min(fs) - pad), min(n - 1, max(fs) + pad)
+            note = f"局部 {f0}~{f1}（出现率 {ratio*100:.0f}%，外扩 20%）"
+        main_meta.append((f0, f1, box))
+        print(f"  位置 {k} → {note}，遮罩 {box}")
     at_pad = 12
     n_at_fixed = 0
     n_at_sym = 0
@@ -606,13 +619,13 @@ def process_video(src: Path, outdir: Path, backend, limit=0, trim_tail=0.0,
         ok, fr = cap.read()
         if not ok:
             break
-        # 主位置始终参与遮罩：逐帧检测到的位置可能是误检，如果只用它，
-        # 真正的水印位置反而会漏掉（实测彩色抖音 logo 就是这样被遗留的）。
-        boxes = list(main_boxes)
+        # 按"该位置此帧是否处于出现时段"决定补遮：命中帧用自己的框，
+        # 未命中帧在该位置的时段内也补遮（检测不稳时保证不漏）。
+        boxes = [b for (f0, f1, b) in main_meta if f0 <= i <= f1]
         if valid[i]:
             key = (int(xs[i]) // 12, int(ys[i]) // 12)
             if key in main:
-                n_fallback += 1          # 与主位置重合，已由 main_boxes 覆盖
+                n_fallback += 1          # 与主位置重合，已由 main_meta 覆盖
             else:
                 # 该帧还有一个主位置之外的水印（多段拼接时常见），额外补遮
                 if key not in box_cache:
@@ -627,9 +640,7 @@ def process_video(src: Path, outdir: Path, backend, limit=0, trim_tail=0.0,
                     bx0, bx1 = int(cx - half[0]), int(cx + half[0])
                     by0, by1 = int(cy - half[1]), int(cy + half[1])
                 boxes.append((max(bx0, 0), max(by0, 0), min(bx1, W), min(by1, H)))
-        elif main_boxes:
-            # 这一帧模板没命中（背景太亮/太暗、水印被遮挡），按主位置补遮，
-            # 避免播放时水印时有时无。
+        elif boxes:
             n_fallback += 1
 
         # @昵称 那种单独一行的半透明水印，位置通常在另一个角，单独出框
