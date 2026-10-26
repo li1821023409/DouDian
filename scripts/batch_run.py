@@ -22,11 +22,39 @@ VC = PROJ / "video-cleaner"
 sys.path.insert(0, str(VC / "scripts"))
 
 from dewatermark import (  # noqa: E402
-    LamaTorch, process_video, TPL_GENERIC, EXPAND_GENERIC,
+    LamaTorch, process_video, TPL_GENERIC, EXPAND_GENERIC, _probe_duration,
 )
 
 ROOT = PROJ / "带货短视频"
 PROGRESS = ROOT / "_去水印进度.json"
+
+
+def sweep_broken(root: Path, suffix: str):
+    """清掉上次中断留下的半成品。
+
+    两种都要清：
+      · `*.part.mp4`  —— 写到一半的中间产物（正常结束会改名成正式文件名）
+      · `*_去水印版.mp4` 但 moov 缺失 —— 旧版本直接写最终文件名时被中断的产物，
+        Windows 里没缩略图、放不了，留着只会被当成成品混过去。
+    """
+    n_part = n_bad = 0
+    for p in root.glob("*/*.part.mp4"):
+        try:
+            p.unlink()
+            n_part += 1
+        except OSError:
+            pass
+    for p in root.glob(f"*/*{suffix}.mp4"):
+        if not _probe_duration(p):
+            try:
+                p.unlink()
+                n_bad += 1
+                print(f"  [清理] 删除无效成品 {p.parent.name}\\{p.name}（缺 moov，无法播放）",
+                      flush=True)
+            except OSError:
+                pass
+    if n_part or n_bad:
+        print(f"  [清理] 中间产物 {n_part} 个，无效成品 {n_bad} 个", flush=True)
 
 
 def load_progress():
@@ -55,6 +83,7 @@ def main():
     args = ap.parse_args()
 
     i, n = (int(x) for x in args.shard.split("/"))
+    sweep_broken(ROOT, args.out_suffix)
     files = sorted(str(p) for p in ROOT.glob("*/*.mp4")
                    if args.out_suffix not in p.stem and "_clean" not in p.stem)
     mine = [f for k, f in enumerate(files) if k % n == i]

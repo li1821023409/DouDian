@@ -27,7 +27,9 @@ def white_text_signal(roi):
 
 def main():
     files = [f for f in sorted(glob.glob(str(ROOT / "*" / "*.mp4")))
-             if "_clean" not in os.path.basename(f)]
+             if "_clean" not in os.path.basename(f)
+             and "_去水印版" not in os.path.basename(f)
+             and not f.endswith(".part.mp4")]
     results = []
     for f in files:
         cap = cv2.VideoCapture(f)

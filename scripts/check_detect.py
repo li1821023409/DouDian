@@ -18,7 +18,9 @@ ROOT = Path(r"D:\Data\DouDian\带货短视频")
 def main():
     det = WatermarkDetector(TPL_GENERIC)
     files = [f for f in sorted(glob.glob(str(ROOT / "*" / "*.mp4")))
-             if "_clean" not in os.path.basename(f)]
+             if "_clean" not in os.path.basename(f)
+             and "_去水印版" not in os.path.basename(f)
+             and not f.endswith(".part.mp4")]
     print(f"共 {len(files)} 个原片，阈值 {det.thresh}\n")
     print(f"{'商品':<14}{'文件':<9}{'分辨率':<14}{'分数':<8}{'位置':<14}判定")
     print("-" * 72)

@@ -14,7 +14,15 @@ SCALES = tuple(round(0.60 + 0.08 * i, 2) for i in range(14))  # 0.60 ~ 1.64
 
 
 def build_template():
-    p = os.path.join(SRC, "【新品首发】柏牧家宠物尿垫！瞬吸除臭打孔网膜不湿脚，宠物除臭尿垫", "01.mp4")
+    # 模板是从某一帧里「量出来的」，不能自动猜视频，必须显式传：
+    #   python test_generic.py "D:\Data\DouDian\带货短视频\<商品名>\<商品名>_01.mp4"
+    if len(sys.argv) < 2:
+        raise SystemExit(
+            "用法: python test_generic.py <含「抖音」水印的视频路径>\n"
+            "     模板要按画面固定坐标裁剪，需要指定样本视频（720x1280 才匹配 TPL_BOX）。")
+    p = sys.argv[1]
+    if not os.path.exists(p):
+        raise SystemExit(f"文件不存在: {p}")
     cap = cv2.VideoCapture(p)
     n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.set(cv2.CAP_PROP_POS_FRAMES, int(n * 0.4))

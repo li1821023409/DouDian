@@ -560,7 +560,16 @@ def process_video(src: Path, outdir: Path, backend, limit=0, trim_tail=0.0,
         return None
 
     # 第二遍：修复（直接通过管道喂给 ffmpeg，一次编码无损输出）
+    #
+    # 先写 `.part.mp4`，等时长校验通过后再改名成最终文件。
+    # 原因：ffmpeg 只在正常结束时才写 moov 索引（`+faststart` 还要回填文件头）。
+    # 进程被 Ctrl+C / 超时 / 关窗口杀掉时，留下的是几十 MB 没有 moov 的裸数据——
+    # Windows 里不显示缩略图、双击放不了，还会被当成品混在目录里。
+    # 中间态用 .part 后缀，一眼能认出来，下次启动也会自动清掉。
     final = outdir / f"{src.stem}{out_suffix}.mp4"
+    tmp_out = outdir / f"{src.stem}{out_suffix}.part.mp4"
+    if tmp_out.exists():
+        tmp_out.unlink()
     has_audio = _has_audio(src)
     cmd = [str(FFMPEG), "-y", "-loglevel", "error",
            "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{W}x{H}", "-r", f"{fps}", "-i", "-"]
@@ -569,7 +578,7 @@ def process_video(src: Path, outdir: Path, backend, limit=0, trim_tail=0.0,
     else:
         cmd += ["-map", "0:v:0"]
     cmd += ["-c:v", "libx264", "-crf", "17", "-preset", "medium", "-pix_fmt", "yuv420p",
-            "-movflags", "+faststart", str(final)]
+            "-movflags", "+faststart", str(tmp_out)]
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
 
     cap = cv2.VideoCapture(str(src))
@@ -615,6 +624,7 @@ def process_video(src: Path, outdir: Path, backend, limit=0, trim_tail=0.0,
     if extra_list:
         print(f"  补遮区 {len(extra_list)} 个: "
               + ", ".join(f"{e[:4]}@{e[4]/fps:.1f}-{e[5]/fps:.1f}s" for e in extra_list))
+    pipe_dead = False
     for i in range(n):
         ok, fr = cap.read()
         if not ok:
@@ -670,32 +680,59 @@ def process_video(src: Path, outdir: Path, backend, limit=0, trim_tail=0.0,
             mask = np.zeros((H, W), np.uint8)
             cv2.rectangle(mask, (b[0], b[1]), (b[2], b[3]), 255, -1)
             fr = repair(fr, mask, b, backend)
-        proc.stdin.write(fr.tobytes())
+        try:
+            proc.stdin.write(fr.tobytes())
+        except (BrokenPipeError, OSError) as e:
+            print(f"\n  [失败] 写入 ffmpeg 管道中断：{e}")
+            pipe_dead = True
+            break
         if not quiet and i % 10 == 0:
             el = time.time() - t0
             eta = el / (i + 1) * (n - i - 1)
             print(f"  修复 {i:4d}/{n}  {el:.0f}s  剩余 {eta:.0f}s", end="\r")
     cap.release()
-    proc.stdin.close()
+    if pipe_dead:
+        try:
+            proc.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+        # 管道断了 ffmpeg 可能还在等输入，直接杀掉，避免读 stderr 时卡死
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        err2 = proc.stderr.read().decode("utf-8", "ignore")
+        proc.wait()
+        print("  [ffmpeg 失败]", err2[-500:])
+        _discard(tmp_out)
+        return None
+    try:
+        proc.stdin.close()
+    except (BrokenPipeError, OSError):
+        pass
     err = proc.stderr.read().decode("utf-8", "ignore")
     proc.wait()
     print(f"\n  修复耗时 {time.time()-t0:.1f}s，其中 {n_at_fixed} 帧补修了 @昵称 水印"
           f"，{n_at_sym} 帧补修了 @账号名 水印，{n_extra} 帧应用了补遮区")
     if proc.returncode != 0:
         print("  [ffmpeg 失败]", err[-500:])
+        _discard(tmp_out)
         return None
-    print(f"  ✔ 输出 {final.name}  ({final.stat().st_size/1e6:.1f} MB)")
 
-    # 成品校验：时长必须接近预期，否则说明编码中断（曾出现 262 字节的空壳）
+    # 成品校验：必须能被解析出时长（moov 缺失 / 空壳 / 时长偏离都算无效），
+    # 通过后才改名成最终文件，避免把半成品留在目录里。
     expect = n / fps if fps else 0
-    got = _probe_duration(final)
+    got = _probe_duration(tmp_out)
+    if not got:
+        print("  [失败] 输出无法解析（缺 moov 索引，通常是编码中断），已丢弃")
+        _discard(tmp_out)
+        return None
     if expect and (got < expect * 0.5 or got > expect * 1.5):
         print(f"  [失败] 输出时长 {got:.1f}s 与预期 {expect:.1f}s 偏差过大，判定无效")
-        try:
-            final.unlink()
-        except OSError:
-            pass
+        _discard(tmp_out)
         return None
+    os.replace(tmp_out, final)
+    print(f"  ✔ 输出 {final.name}  ({final.stat().st_size/1e6:.1f} MB，{got:.1f}s)")
 
     if replace:
         try:
@@ -712,6 +749,15 @@ def process_video(src: Path, outdir: Path, backend, limit=0, trim_tail=0.0,
     return final
 
 
+def _discard(p: Path):
+    """删掉写了一半的中间产物（失败/中断时用，不要留成假成品）。"""
+    try:
+        if p.exists():
+            p.unlink()
+    except OSError:
+        pass
+
+
 def _has_audio(p: Path):
     try:
         r = subprocess.run([str(FFMPEG), "-i", str(p)], capture_output=True, text=True, errors="ignore")
@@ -721,15 +767,28 @@ def _has_audio(p: Path):
 
 
 def _probe_duration(p: Path) -> float:
-    """取视频时长（秒），失败返回 0。"""
+    """取**视频流**时长（秒），失败退回容器时长，再失败返回 0。
+
+    为什么不能直接读容器时长：音轨是 `-c:a copy` 原样搬过来的，音频比视频长时
+    （VFR 片子、或 --limit 只处理片段）容器时长会被音轨撑大，
+    于是"输出 44s vs 预期 5s"这种假失败就出来了。
+    """
     probe = FFMPEG.with_name("ffprobe.exe")
-    try:
-        r = subprocess.run([str(probe), "-v", "error", "-show_entries",
-                            "format=duration", "-of", "default=nw=1:nk=1", str(p)],
-                           capture_output=True, text=True, errors="ignore", timeout=30)
-        return float((r.stdout or "").strip() or 0)
-    except Exception:
-        return 0.0
+    for args in (
+        ["-select_streams", "v:0", "-show_entries", "stream=duration"],
+        ["-show_entries", "format=duration"],
+    ):
+        try:
+            r = subprocess.run([str(probe), "-v", "error", *args,
+                                "-of", "default=nw=1:nk=1", str(p)],
+                               capture_output=True, text=True, errors="ignore", timeout=30)
+            val = (r.stdout or "").strip().splitlines()
+            v = float(val[0]) if val and val[0] not in ("N/A", "") else 0.0
+            if v > 0:
+                return v
+        except Exception:
+            continue
+    return 0.0
 
 
 def main():
