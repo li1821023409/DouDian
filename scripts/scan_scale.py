@@ -14,20 +14,21 @@ TPL = cv2.imread(str(VC / "models" / "wm_douyinvhao.png"))
 BASE = TPL.min(axis=2).astype(np.float32)
 ROOT = Path(r"D:\Data\DouDian\带货短视频")
 
-CASES = [
-    ("【潘宏同款】增肌壮骨犬粮全新升级版全犬种通用狗粮增肌壮骨狗粮", "04.mp4", "未识别"),
-    ("【潘宏同款】增肌壮骨犬粮全新升级版全犬种通用狗粮增肌壮骨狗粮", "01.mp4", "低分误检"),
-    ("【潘宏同款】美伊天祺全价鲜肉乳鸽猫粮", "01.mp4", "未识别"),
-    ("【潘宏同款】美伊天祺全价鲜肉乳鸽猫粮", "07.mp4", "已知OK(0.89)"),
-]
+def pick_cases():
+    """优先用命令行传入的视频，否则自动取 带货短视频 里前几条。"""
+    if len(sys.argv) > 1:
+        return [(Path(a), "手动") for a in sys.argv[1:]]
+    vids = sorted(p for p in ROOT.glob("*/*.mp4")
+                  if "_去水印版" not in p.stem and not p.name.endswith(".part.mp4"))
+    return [(p, "自动") for p in vids[:4]]
+
 
 SCALES = [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95, 1.00, 1.10, 1.20]
 
 
 def main():
     print("模板", BASE.shape, "尺度候选", SCALES, "\n")
-    for d, fn, tag in CASES:
-        p = ROOT / d / fn
+    for p, tag in pick_cases():
         if not p.exists():
             print("跳过", p)
             continue
@@ -39,7 +40,7 @@ def main():
         if not ok:
             continue
         Wd = fr.min(axis=2).astype(np.float32)
-        print(f"--- {d[:14]} {fn} [{tag}] {fr.shape[1]}x{fr.shape[0]}")
+        print(f"--- {p.parent.name[:14]} {p.name} [{tag}] {fr.shape[1]}x{fr.shape[0]}")
         best_overall = (0, None, None)
         for s in SCALES:
             t = cv2.resize(BASE, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)

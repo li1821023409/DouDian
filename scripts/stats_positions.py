@@ -11,8 +11,11 @@ sys.path.insert(0, str(VC / "scripts"))
 import cv2  # noqa: E402
 from dewatermark import WatermarkDetector, TPL_GENERIC  # noqa: E402
 
+ROOT = Path(r"D:\Data\DouDian\带货短视频")
+# 默认样本：文件名 = 文件夹名 + 序号（见 download_rank_videos.py）
+SAMPLE_DIR = "萌仆内外同驱猫狗驱虫吡虫啉莫昔克丁寄生虫体内外一体驱无需喂药"
 SRC = (sys.argv[1] if len(sys.argv) > 1
-       else r"D:\Data\DouDian\带货短视频\萌仆内外同驱猫狗驱虫吡虫啉莫昔克丁寄生虫体内外一体驱无需喂药\08.mp4")
+       else str(ROOT / SAMPLE_DIR / f"{SAMPLE_DIR}_08.mp4"))
 STEP = 15
 
 

@@ -18,7 +18,9 @@ def main():
     lines = ["# 短视频带货榜 1-10 · 下载对照表", ""]
     lines.append("生成时间：%s" % d.get("generated_at"))
     lines.append("")
-    lines.append("输出目录：`D:\\Data\\DouDian\\带货短视频`（每个商品一个文件夹，文件夹名 = 商品名）")
+    lines.append("输出目录：`D:\\Data\\DouDian\\带货短视频`"
+                 "（每个商品一个文件夹，文件夹名 = 商品名；"
+                 "文件名 = 文件夹名_序号，如 `<商品名>_01.mp4`）")
     lines.append("")
     lines.append("| 排名 | 商品名 | 价格 | 应下 | 实下 | 文件夹 |")
     lines.append("|---|---|---|---|---|---|")
@@ -26,7 +28,10 @@ def main():
     tot_expect = tot_got = 0
     for it in items:
         dd = os.path.join(OUT_ROOT, it["dir"])
-        got = len(glob.glob(os.path.join(dd, "*.mp4"))) if os.path.isdir(dd) else 0
+        # 只数「原片」：排除去水印成品和编码中断留下的 .part 残片
+        got = len([f for f in glob.glob(os.path.join(dd, "*.mp4"))
+                   if "_去水印版" not in os.path.basename(f)
+                   and not f.endswith(".part.mp4")]) if os.path.isdir(dd) else 0
         exp = it["videos"]
         tot_expect += exp
         tot_got += got

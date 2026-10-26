@@ -8,8 +8,26 @@ from pathlib import Path
 import cv2
 
 FF = str(Path(r"D:\Data\DouDian\video-cleaner\tools\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe"))
-SRC = r"D:\Data\DouDian\带货短视频\【潘宏同款】美伊天祺全价鲜肉乳鸽猫粮\01.mp4"
-OUT = r"D:\Data\DouDian\带货短视频\_naming_test\probe_out.mp4"
+# 产物放 video-cleaner\output 下，不要放「带货短视频」——那里是流水线输入目录，
+# 混进探测用的 mp4 会被当成待处理视频。
+OUT_DIR = Path(r"D:\Data\DouDian\video-cleaner\output\_probe")
+OUT = str(OUT_DIR / "probe_out.mp4")
+
+
+def _pick_video():
+    """取一个真实样本：优先命令行传参，否则用 带货短视频 里最新的一条。"""
+    if len(sys.argv) > 1:
+        return sys.argv[1]
+    root = Path(r"D:\Data\DouDian\带货短视频")
+    vids = [p for p in root.glob("*/*.mp4")
+            if "_去水印版" not in p.stem and not p.name.endswith(".part.mp4")]
+    if not vids:
+        raise SystemExit("带货短视频 下还没有视频，先下载一批，或直接传路径：probe_ffmpeg.py <视频>")
+    return str(max(vids, key=lambda p: p.stat().st_mtime))
+
+
+SRC = _pick_video()
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def trial(extra_args, label):

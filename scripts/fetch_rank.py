@@ -95,19 +95,31 @@ def parse_rows(text):
         title = urllib.parse.unquote(t)
         vraw = urllib.parse.unquote(vr)
         videos = []
+        aigc = 0
         if vraw:
             try:
                 arr = json.loads(html.unescape(vraw))
                 if isinstance(arr, str):
                     arr = [arr]
-                videos = [u.replace("&amp;", "&") for u in arr if isinstance(u, str)]
+                # 页面数据里会把 AIGC 视频的类型标记（"aigc"）和真实直链混在同一个
+                # 数组里。只留 http(s) 直链，AIGC 视频没有可直接下载的直链，单独计数。
+                kept = []
+                for u in arr:
+                    if not isinstance(u, str):
+                        continue
+                    u = u.replace("&amp;", "&").strip()
+                    if u.lower().startswith(("http://", "https://")):
+                        kept.append(u)
+                    elif u.lower() == "aigc":
+                        aigc += 1
+                videos = kept
             except Exception:
                 videos = [m.replace("&amp;", "&")
                           for m in re.findall(r"https?://[^\"\]\s]+", vraw)]
         items.append(dict(itemid=itemid, title=title.strip(),
                           price=urllib.parse.unquote(p1), price2=urllib.parse.unquote(p2),
                           label=urllib.parse.unquote(label), pic=urllib.parse.unquote(pic),
-                          videos=videos, page=cur_page))
+                          videos=videos, aigc=aigc, page=cur_page))
     return items, cur_page
 
 

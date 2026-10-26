@@ -2,11 +2,16 @@
 # -*- coding: utf-8 -*-
 """抖音带货短视频 · 全流程流水线
 
-    打开罗盘短视频榜 → 抓榜单直链 → 按商品分文件夹下载 → 批量去水印
+    打开罗盘短视频榜 → 抓榜单直链 → 按商品分文件夹下载（含商品主图）
+    → 可选：批量去水印
+
+⚠️ 去水印默认**不执行**：它很慢（长视频一条十几分钟），只有用户明确说
+「去水印 / 跑一下去水印 / 处理后发我」时才加 `--dewatermark`。
 
 用法：
-    python scripts/run_pipeline.py --top 10                  # 完整跑：1-10 名，下载后自动去水印
-    python scripts/run_pipeline.py --top 10 --no-clean       # 只下载，不去水印
+    python scripts/run_pipeline.py --top 10                  # 默认：只下载
+    python scripts/run_pipeline.py --top 10 --dewatermark    # 下载后去水印
+    python scripts/run_pipeline.py --top 10 --dewatermark --replace   # 去水印后删原片
     python scripts/run_pipeline.py --top 10 --skip-open      # 页面已打开且在第 1 页时跳过
     python scripts/run_pipeline.py --top 3 --dry-run         # 只打印计划，不执行
 """
@@ -40,7 +45,7 @@ def run(cmd, desc, dry=False):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="抖音带货短视频全流程：榜单→下载→去水印")
+    ap = argparse.ArgumentParser(description="抖音带货短视频流水线：榜单→下载（去水印可选）")
     ap.add_argument("--from", dest="from_rank", type=int, default=1,
                     help="起始排名（含），从 1 开始。例：--from 10")
     ap.add_argument("--to", dest="to_rank", type=int, default=0,
@@ -49,8 +54,12 @@ def main():
                     help="等价于 --to（只下前 N 名，默认 10）")
     ap.add_argument("--skip-open", action="store_true", help="跳过打开榜单页")
     ap.add_argument("--skip-fetch", action="store_true", help="跳过抓取，复用已有 JSON")
-    ap.add_argument("--no-clean", action="store_true", help="只下载，不去水印")
-    ap.add_argument("--replace", action="store_true", help="去水印成功后删除原片（默认保留）")
+    ap.add_argument("--dewatermark", action="store_true",
+                    help="下载后执行去水印（默认不执行，用户明确要求去水印时才加）")
+    ap.add_argument("--no-clean", action="store_true",
+                    help="[已废弃] 现在默认就不去水印，保留此参数只为兼容旧命令")
+    ap.add_argument("--replace", action="store_true",
+                    help="去水印成功后删除原片（需同时加 --dewatermark）")
     ap.add_argument("--workers", type=int, default=6, help="下载并发")
     ap.add_argument("--shards", type=int, default=2, help="去水印并行进程数")
     ap.add_argument("--clean", action="store_true",
@@ -73,14 +82,25 @@ def main():
         lo, hi = hi, lo
     span = f"第 {lo}-{hi} 名" if hi else f"第 {lo} 名起（到末尾）"
     print(f"  榜单区间: {span}")
-    print(f"  去水印  : {'跳过' if args.no_clean else f'执行（{args.shards} 进程并行）'}")
-    if not args.no_clean and not args.replace:
-        print("  原片处理: 保留，输出 *_clean.mp4（加 --replace 才删原片）")
+
+    # 去水印必须显式开启：用户没说「去水印」就只下载。
+    do_dewm = args.dewatermark
+    if args.no_clean:
+        print("  · --no-clean 已废弃：现在默认就不去水印，参数保留只为兼容")
+    if args.replace and not do_dewm:
+        print("  ⚠ --replace 需要配合 --dewatermark，否则不生效（本次只下载）")
+    if do_dewm:
+        print(f"  去水印  : 执行（{args.shards} 进程并行）")
+        if not args.replace:
+            print("  原片处理: 保留，输出 *_去水印版.mp4（加 --replace 才删原片）")
+    else:
+        print("  去水印  : 跳过（默认不执行；确需去水印请加 --dewatermark）")
 
     # 目录非空时提醒，避免新旧产物混在一起
     out_root = PROJ / "带货短视频"
     if out_root.exists():
-        n_exist = len([p for p in out_root.rglob("*.mp4")])
+        n_exist = len([p for p in out_root.rglob("*.mp4")
+                       if not p.name.endswith(".part.mp4")])
         if n_exist:
             if args.clean:
                 print(f"  目录清理: 将先删除现有 {n_exist} 个视频及全部子目录")
@@ -108,9 +128,9 @@ def main():
                       "② 抓取榜单商品与视频直链"))
     steps.append(([PY_SYS, str(SCRIPTS / "download_rank_videos.py"),
                    "--from", str(lo), "--to", str(hi), "--workers", str(args.workers)],
-                  f"③ 下载{span}的短视频（按商品名建文件夹）"))
+                  f"③ 下载{span}的短视频 + 商品主图（每个商品一个文件夹，文件名=文件夹名_序号）"))
 
-    if not args.no_clean:
+    if do_dewm:
         shard_cmds = [[PY_VENV, str(SCRIPTS / "batch_run.py"),
                        "--shard", f"{i}/{args.shards}"] + (["--no-replace"] if not args.replace else [])
                       for i in range(args.shards)]
@@ -138,8 +158,12 @@ def main():
                 return 1
 
     print(f"\n{'='*60}")
-    print(f"全流程完成，总耗时 {(time.time()-t0)/60:.1f} 分钟")
+    print(f"流程完成，总耗时 {(time.time()-t0)/60:.1f} 分钟")
     print(f"成品目录: {PROJ / '带货短视频'}")
+    # 注意：这里**不要**打印去水印的后续命令。
+    # 之前这里会输出 `batch_run.py --shard 0/2`，AI 代理读到后会自动去跑去水印，
+    # 而用户并没有要求去水印（一条长视频要十几分钟），属于越权执行。
+    # 去水印只在用户明确要求时由人手动触发。
     print(f"{'='*60}")
     return 0
 
