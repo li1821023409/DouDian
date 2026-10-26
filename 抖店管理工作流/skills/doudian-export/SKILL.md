@@ -10,7 +10,7 @@ description: 自动整理抖店数据——导出货架商品数据表到本地�
 **这个技能的全部工作都封装在 Python 脚本里。你的唯一任务是执行下面这条命令。**
 
 ```bash
-D:/Install/Python/python.exe C:/Users/18210/.openclaw/workspace/skills/doudian-export/scripts/doudian_export.py --target-dir "D:\Data\DouDian\商品数据" --with-slot
+D:/Install/Python/python.exe "{{PROJ}}/scripts/doudian_export.py" --target-dir "{{PROJ}}/商品数据" --with-slot
 ```
 
 用 `bash` 工具执行这条命令，等待结束（约 40 秒），然后把输出里的
@@ -129,7 +129,8 @@ openclaw automations runs <id>               # 查看运行历史
 
 ## 维护信息（仅在用户要求修改代码时才需要读）
 
-脚本：`scripts/doudian_export.py`，纯标准库，无需 pip 依赖。
+脚本：`{{PROJ}}/scripts/doudian_export.py`，纯标准库，无需 pip 依赖。
+（本技能目录只有这份 SKILL.md，脚本统一放在仓库 `scripts\`。）
 
 内部流程为抖店的异步导出三段式：提交 → 后台生成 → 从「查看导出记录」页下载。
 

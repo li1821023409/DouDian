@@ -24,10 +24,9 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-# doudian_export.py 原先与本脚本同目录；脚本迁到 compass-video-rank 后回退到 doudian-export 技能目录
+# doudian_export.py 与本脚本同目录（都只在仓库 scripts\ 下，技能目录不再放脚本）
 _DEX_CANDIDATES = [
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "doudian_export.py"),
-    r"C:\Users\18210\.openclaw\workspace\skills\doudian-export\scripts\doudian_export.py",
     r"D:\Data\DouDian\scripts\doudian_export.py",
 ]
 _DEX = next((p for p in _DEX_CANDIDATES if os.path.exists(p)), None)

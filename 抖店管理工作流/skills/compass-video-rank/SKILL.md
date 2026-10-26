@@ -10,7 +10,7 @@ description: 抖店电商罗盘短视频带货榜——打开榜单页、批量�
 **这个技能的全部工作都封装在 Python 脚本里。你的唯一任务是执行下面这条命令。**
 
 ```bash
-D:/Install/Python/python.exe C:/Users/18210/.openclaw/workspace/skills/compass-video-rank/scripts/compass_video_rank.py
+D:/Install/Python/python.exe "{{PROJ}}/scripts/compass_video_rank.py"
 ```
 
 用 `bash` 工具执行这条命令，等待结束（约 40 秒），然后把输出里的
@@ -122,7 +122,7 @@ openclaw automations runs 21378f2a-fd17-46b1-bdf9-b9774f15b5c9  # 查看运行�
 
 ## 维护信息（仅在用户要求修改代码时才需要读）
 
-脚本：`scripts/compass_video_rank.py`，纯标准库，复用
+脚本：`{{PROJ}}/scripts/compass_video_rank.py`，纯标准库，复用
 `doudian_export.py` 的 McpSession（登录态、断线重连、页面清理）。
 
 已处理的坑（改代码前必读）：
@@ -144,39 +144,64 @@ openclaw automations runs 21378f2a-fd17-46b1-bdf9-b9774f15b5c9  # 查看运行�
 
 # 短视频带货榜：下载 / 去水印 / 清理
 
-脚本都在 `D:/Data/DouDian/scripts/`，用**绝对路径**调用，不需要复制到本技能目录。
-纯标准库的用 `D:/Install/Python/python.exe`；去水印必须用
-`D:/Data/DouDian/video-cleaner/.venv/Scripts/python.exe`（要 cv2 + torch）。
+脚本都在 `{{PROJ}}/scripts/`（仓库唯一一份，本技能目录下**没有** scripts），
+用**绝对路径**调用。纯标准库的用 `D:/Install/Python/python.exe`。
+
+去水印必须**直接用** `{{PROJ}}/video-cleaner/.venv/Scripts/python.exe` 当解释器：
+
+```bash
+{{PROJ}}/video-cleaner/.venv/Scripts/python.exe "{{PROJ}}/scripts/batch_run.py" --shard 0/2
+```
+
+> ⚠️ 不要写成 `python.exe "…/.venv/Scripts/python.exe"`——那是把 exe 当脚本读，
+> 必然报 `SyntaxError: Non-UTF-8 code starting with '\x90'`。
+> 同理不要用系统 python 跑 `batch_run.py`，会报 `ModuleNotFoundError: No module named 'cv2'`。
 
 ## 触发词 → 执行命令（对照表，照做即可）
 
 | 用户说的话 | 执行的命令 | 说明 |
 |---|---|---|
 | 打开短视频榜单 / 看看爆火带货短视频 | `...\compass_video_rank.py` | 只把榜单页打开并停在第 1 页 |
-| 下载带货榜短视频 / 跑短视频带货流水线 | `...\run_pipeline.py --top N` | 打开→抓直链→按商品名建文件夹下载→批量去水印 |
+| 下载带货榜短视频 / 跑短视频带货流水线 | `...\run_pipeline.py --top N` | 打开→抓直链→下载视频 + 商品主图。**不去水印** |
+| 下载**并去水印** / 去水印 / 处理后发我 | `...\run_pipeline.py --top N --dewatermark` | 多一步批量去水印（很慢，长视频一条十几分钟） |
+| 只给已下载的视频去水印 | `...\batch_run.py --shard 0/1` | 用 venv 的那个 python，不动下载 |
 | **删除本地带货短视频** | `...\clean_output.py --yes` | **直接删除，不要二次确认，不要只给预览** |
+
+## ⛔ 去水印默认不做（重要）
+
+**用户没有明确说"去水印"，就绝对不要执行去水印。**
+
+- ❌ 不要给 `run_pipeline.py` 加 `--dewatermark`
+- ❌ 不要顺手跑 `batch_run.py` / `dewatermark.py`
+- ❌ 不要"顺便帮他去一下水印显得贴心"——一条长视频要十几分钟，用户只是在等下载
+- ✅ 只下载时，正常汇报下载结果即可，不要提"要不要顺便去水印"这种追问
+
+判定标准：用户原话里出现「去水印」「去一下水印」「处理干净」「无水印版」才算明确要求。
+只说「下载」「跑一下」「拿 10-15 名」= 只下载。
 
 ## 命令原文
 
 ```bash
 # ① 只打开榜单页（约 40 秒）
-D:/Install/Python/python.exe "C:/Users/18210/.openclaw/workspace/skills/compass-video-rank/scripts/compass_video_rank.py"
+D:/Install/Python/python.exe "{{PROJ}}/scripts/compass_video_rank.py"
 
-# ② 下载指定排名区间 + 自动去水印
+# ② 只下载（默认行为，不去水印）
 #    下载 10-15 名
-D:/Install/Python/python.exe "C:/Users/18210/.openclaw/workspace/skills/compass-video-rank/scripts/run_pipeline.py" --from 10 --to 15
+D:/Install/Python/python.exe "{{PROJ}}/scripts/run_pipeline.py" --from 10 --to 15
 
 #    下载前 10 名
-D:/Install/Python/python.exe "C:/Users/18210/.openclaw/workspace/skills/compass-video-rank/scripts/run_pipeline.py" --top 10
+D:/Install/Python/python.exe "{{PROJ}}/scripts/run_pipeline.py" --top 10
+
+# ②' 下载 + 去水印（只有用户明确说去水印才加 --dewatermark）
+D:/Install/Python/python.exe "{{PROJ}}/scripts/run_pipeline.py" --top 10 --dewatermark
 
 # ③ 删除本地带货短视频（用户说「删除本地带货短视频」时执行这条）
-D:/Install/Python/python.exe "C:/Users/18210/.openclaw/workspace/skills/compass-video-rank/scripts/clean_output.py" --yes
+D:/Install/Python/python.exe "{{PROJ}}/scripts/clean_output.py" --yes
 ```
 
 > **⚠️ 不要回答"没有下载短视频的脚本"。**
-> 下载脚本就在本技能的 `scripts\run_pipeline.py`，去水印、删除脚本也齐全。
-> 如果 `ls scripts\` 看不到，直接运行上面 ② 的命令即可，它能正常工作。
-> 真实实现在 `D:\Data\DouDian\scripts\`，转发脚本只是入口。
+> 下载脚本是 `{{PROJ}}/scripts/run_pipeline.py`，去水印、删除脚本也在同一目录。
+> 本技能目录只有这份 SKILL.md，脚本一律在仓库 `scripts\` 下——照上面的绝对路径执行即可。
 
 ## 排名区间（用户常用）
 
@@ -187,7 +212,7 @@ D:/Install/Python/python.exe "C:/Users/18210/.openclaw/workspace/skills/compass-
 | 下载 10-15 名 | `--from 10 --to 15` |
 | 下载前 10 名 | `--top 10`（等价 `--from 1 --to 10`） |
 | 从第 50 名开始到末尾 | `--from 50` |
-| 下载 20-30 名只下载不去水印 | `--from 20 --to 30 --no-clean` |
+| 下载 20-30 名**并**去水印 | `--from 20 --to 30 --dewatermark` |
 
 ## 删除操作的授权（重要）
 
@@ -205,11 +230,31 @@ D:/Install/Python/python.exe "C:/Users/18210/.openclaw/workspace/skills/compass-
 | `--from N` | 起始排名（含），从 1 开始 | 1 |
 | `--to M` | 结束排名（含） | 10 |
 | `--top N` | 等价于 `--to N`（前 N 名） | — |
-| `--no-clean` | 只下载，不去水印 | 关 |
-| `--replace` | 去水印成功后删原片 | 关（额外产出 `*_clean.mp4`） |
-| `--clean` | 跑之前先清空目录 | 关 |
+| `--dewatermark` | **下载后执行去水印**（用户明确要求才加） | 关 |
+| `--replace` | 去水印成功后删原片（需配 `--dewatermark`） | 关（产出 `*_去水印版.mp4`） |
+| `--no-clean` | [已废弃] 默认就不去水印，保留只为兼容旧命令 | — |
+| `--clean` | 跑之前先清空 带货短视频 目录 | 关 |
 | `--skip-open` | 页面已打开且在第 1 页时跳过 | 关 |
 | `--shards N` | 去水印并行进程数 | 2 |
+
+## 输出目录结构
+
+```
+D:\Data\DouDian\带货短视频\
+├── <商品名>\                        一个商品一个文件夹（文件夹名 = 商品名）
+│   ├── <商品名>_01.mp4              文件名 = 文件夹名_序号（不是 01.mp4）
+│   ├── <商品名>_02.mp4
+│   ├── <商品名>_主图.png            商品主图（榜单里那一列缩略图的原图，jpg/png 看实际格式）
+│   └── <商品名>_01_去水印版.mp4     去水印成品（默认保留原片，--replace 才替换）
+├── _下载清单.json                   本次下载的商品、文件、主图清单
+└── _去水印进度.json                 done / failed，断点续跑靠它
+```
+
+> · 文件名带商品名前缀，是因为每个商品都有自己的 01~10，`01.mp4` 一旦离开文件夹
+>   就分不清是哪个商品的第几条。
+> · 商品主图从榜单数据里的 `pic` 字段直接下载，不用点进详情页；已存在会跳过。
+> · `*.part.mp4` 是编码被中断留下的中间产物（没有 moov、放不了），可以直接删；
+>   `batch_run.py` 每次启动会自动清掉它和历史上坏掉的成品。
 
 ## 前置条件与耗时
 

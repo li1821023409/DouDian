@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""把 OpenClaw 的两个技能源文件同步成项目里的副本，并插入「本文件是副本」的说明。
+"""把仓库里的技能定义渲染成「人类阅读版」存到项目里，并插入说明。
 
-    C:\\Users\\18210\\.openclaw\\workspace\\skills\\doudian-export\\SKILL.md
-        → D:\\Data\\DouDian\\抖店管理工作流\\技能定义-商品导出（副本）.md
-    C:\\Users\\18210\\.openclaw\\workspace\\skills\\compass-video-rank\\SKILL.md
-        → D:\\Data\\DouDian\\抖店管理工作流\\技能定义-短视频榜单（副本）.md
+    抖店管理工作流/skills/doudian-export/SKILL.md
+        → 抖店管理工作流/技能定义-商品导出（副本）.md
+    抖店管理工作流/skills/compass-video-rank/SKILL.md
+        → 抖店管理工作流/技能定义-短视频榜单（副本）.md
 
-改技能时永远改源文件，然后运行本脚本。
+方向说明（2026-10 起）：
+    · 唯一真源是仓库 `抖店管理工作流/skills/<技能>/SKILL.md`
+    · `~/.openclaw/workspace/skills/` 里的是 install_skills.py 装过去的同一份内容
+    · 本脚本只生成给人看的副本，把 {{PROJ}} 换成可直接复制的 Windows 路径
+
+改技能时改仓库 SKILL.md，然后跑  install_skills.py（生效）+ 本脚本（留档）。
 """
 import sys
 from pathlib import Path
 
-OC = Path(r"C:\Users\18210\.openclaw\workspace\skills")
-DOCS = Path(r"D:\Data\DouDian\抖店管理工作流")
+PROJ = Path(__file__).resolve().parent.parent
+SRC = PROJ / "抖店管理工作流" / "skills"
+DOCS = PROJ / "抖店管理工作流"
 
 PAIRS = [
     ("doudian-export", "技能定义-商品导出（副本）.md",
@@ -22,26 +28,31 @@ PAIRS = [
      "短视频带货榜（打开榜单 / 下载视频 / 去水印 / 删除本地视频）"),
 ]
 
+PLACEHOLDER = "{{PROJ}}"
+
 
 def note(skill_dir: str, summary: str):
     return [
         "",
-        "> **📄 本文件是副本，仅供查阅与版本留档。**",
+        "> **📄 本文件是仓库技能的阅读版副本，仅供查阅与版本留档。**",
         f"> 用途：{summary}",
-        f"> 真正生效的文件：`C:\\Users\\18210\\.openclaw\\workspace\\skills\\{skill_dir}\\SKILL.md`",
-        "> OpenClaw 只读源文件。要改行为请改源文件，然后运行 `scripts/sync_skill_copy.py` 重新生成本文件。",
+        f"> 真正生效的文件：`{SRC / skill_dir / 'SKILL.md'}`",
+        f"> 所有脚本的唯一位置：`{PROJ / 'scripts'}`（技能定义里用绝对路径调用）",
+        "> OpenClaw 实际读取的是 `~/.openclaw/workspace/skills/"
+        f"{skill_dir}/SKILL.md`，由 `scripts/install_skills.py` 从本仓库安装。",
         "",
     ]
 
 
-def sync_one(skill_dir: str, dst_name: str, summary: str):
-    src = OC / skill_dir / "SKILL.md"
+def sync_one(skill_dir: str, dst_name: str, summary: str) -> bool:
+    src = SRC / skill_dir / "SKILL.md"
     dst = DOCS / dst_name
     if not src.exists():
         print(f"✗ 源文件不存在: {src}")
         return False
 
-    lines = src.read_text(encoding="utf-8").split("\n")
+    text = src.read_text(encoding="utf-8").replace(PLACEHOLDER, str(PROJ))
+    lines = text.split("\n")
     end, seen = None, 0
     for i, line in enumerate(lines):
         if line.strip() == "---":
@@ -55,28 +66,25 @@ def sync_one(skill_dir: str, dst_name: str, summary: str):
 
     out = lines[:end + 1] + note(skill_dir, summary) + lines[end + 1:]
     dst.write_text("\n".join(out), encoding="utf-8")
-
-    text = dst.read_text(encoding="utf-8")
-    print(f"✓ {skill_dir}/SKILL.md  →  {dst_name}")
-    print(f"    源 {len(''.join(lines))} 字符 / 副本 {len(text)} 字符")
+    print(f"✓ skills/{skill_dir}/SKILL.md  →  {dst_name}  ({len(''.join(out))} 字符)")
     return True
 
 
-def main():
+def main() -> int:
     ok = True
     for d, name, summary in PAIRS:
         ok &= sync_one(d, name, summary)
 
-    print("\n--- 副本校验 ---")
+    print("\n--- 校验 ---")
     for d, name, _ in PAIRS:
         p = DOCS / name
         if not p.exists():
+            ok = False
             continue
         t = p.read_text(encoding="utf-8")
-        print(f"  {name}")
-        print(f"    短视频章节 {t.count('# 短视频带货榜')} 次 | "
-              f"删除触发词 {t.count('删除本地带货短视频')} 次 | "
-              f"商品导出章节 {t.count('# 自动整理抖店数据')} 次")
+        bad = PLACEHOLDER in t
+        print(f"  {name}: 占位符残留={bad} | 字面量 {len(t)} 字符")
+        ok &= not bad
     return 0 if ok else 1
 
 
