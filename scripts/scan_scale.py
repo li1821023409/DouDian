@@ -14,12 +14,15 @@ TPL = cv2.imread(str(VC / "models" / "wm_douyinvhao.png"))
 BASE = TPL.min(axis=2).astype(np.float32)
 ROOT = Path(r"D:\Data\DouDian\带货短视频")
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from video_rules import is_original  # noqa: E402
+
+
 def pick_cases():
     """优先用命令行传入的视频，否则自动取 带货短视频 里前几条。"""
     if len(sys.argv) > 1:
         return [(Path(a), "手动") for a in sys.argv[1:]]
-    vids = sorted(p for p in ROOT.glob("*/*.mp4")
-                  if "_去水印版" not in p.stem and not p.name.endswith(".part.mp4"))
+    vids = sorted(p for p in ROOT.glob("*/*.mp4") if is_original(p))
     return [(p, "自动") for p in vids[:4]]
 
 

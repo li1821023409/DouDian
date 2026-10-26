@@ -7,6 +7,9 @@ from pathlib import Path
 
 import cv2
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from video_rules import is_original  # noqa: E402
+
 FF = str(Path(r"D:\Data\DouDian\video-cleaner\tools\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe"))
 # 产物放 video-cleaner\output 下，不要放「带货短视频」——那里是流水线输入目录，
 # 混进探测用的 mp4 会被当成待处理视频。
@@ -19,8 +22,7 @@ def _pick_video():
     if len(sys.argv) > 1:
         return sys.argv[1]
     root = Path(r"D:\Data\DouDian\带货短视频")
-    vids = [p for p in root.glob("*/*.mp4")
-            if "_去水印版" not in p.stem and not p.name.endswith(".part.mp4")]
+    vids = [p for p in root.glob("*/*.mp4") if is_original(p)]
     if not vids:
         raise SystemExit("带货短视频 下还没有视频，先下载一批，或直接传路径：probe_ffmpeg.py <视频>")
     return str(max(vids, key=lambda p: p.stat().st_mtime))

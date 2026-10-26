@@ -25,6 +25,9 @@ from dewatermark import (  # noqa: E402
     LamaTorch, process_video, TPL_GENERIC, EXPAND_GENERIC, _probe_duration,
 )
 
+sys.path.insert(0, str(HERE))
+from video_rules import is_original  # noqa: E402
+
 ROOT = PROJ / "带货短视频"
 PROGRESS = ROOT / "_去水印进度.json"
 
@@ -84,8 +87,7 @@ def main():
 
     i, n = (int(x) for x in args.shard.split("/"))
     sweep_broken(ROOT, args.out_suffix)
-    files = sorted(str(p) for p in ROOT.glob("*/*.mp4")
-                   if args.out_suffix not in p.stem and "_clean" not in p.stem)
+    files = sorted(str(p) for p in ROOT.glob("*/*.mp4") if is_original(p))
     mine = [f for k, f in enumerate(files) if k % n == i]
     if args.limit:
         mine = mine[:args.limit]

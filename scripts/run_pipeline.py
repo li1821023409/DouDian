@@ -3,14 +3,19 @@
 """抖音带货短视频 · 全流程流水线
 
     打开罗盘短视频榜 → 抓榜单直链 → 按商品分文件夹下载（含商品主图）
-    → 可选：批量去水印
+    → 统一为巨量千川素材规格 → 可选：批量去水印
+
+⚠️ 千川规格**默认执行**：巨量千川对上传素材有硬性要求（竖版 720x1280 起、
+码率 ≥516kbps、4~300s 等），下载到的原始直链经常不达标。这一步是原地
+替换，文件名不变，不产生额外文件。确实不需要时加 `--no-qianchuan`。
 
 ⚠️ 去水印默认**不执行**：它很慢（长视频一条十几分钟），只有用户明确说
 「去水印 / 跑一下去水印 / 处理后发我」时才加 `--dewatermark`。
 
 用法：
-    python scripts/run_pipeline.py --top 10                  # 默认：只下载
-    python scripts/run_pipeline.py --top 10 --dewatermark    # 下载后去水印
+    python scripts/run_pipeline.py --top 10                  # 默认：下载 + 统一千川规格
+    python scripts/run_pipeline.py --top 10 --no-qianchuan   # 只下载，不转码
+    python scripts/run_pipeline.py --top 10 --dewatermark    # 下载 + 去水印 + 统一规格
     python scripts/run_pipeline.py --top 10 --dewatermark --replace   # 去水印后删原片
     python scripts/run_pipeline.py --top 10 --skip-open      # 页面已打开且在第 1 页时跳过
     python scripts/run_pipeline.py --top 3 --dry-run         # 只打印计划，不执行
@@ -62,6 +67,9 @@ def main():
                     help="去水印成功后删除原片（需同时加 --dewatermark）")
     ap.add_argument("--workers", type=int, default=6, help="下载并发")
     ap.add_argument("--shards", type=int, default=2, help="去水印并行进程数")
+    ap.add_argument("--no-qianchuan", action="store_true",
+                    help="不统一千川规格（默认会做：巨量千川素材有分辨率等硬性要求）")
+    ap.add_argument("--jobs", type=int, default=4, help="千川转码并发（默认 4）")
     ap.add_argument("--clean", action="store_true",
                     help="跑之前先清空 带货短视频 目录（彻底删除，不保留旧产物）")
     ap.add_argument("--dry-run", action="store_true", help="只打印计划")
@@ -95,6 +103,10 @@ def main():
             print("  原片处理: 保留，输出 *_去水印版.mp4（加 --replace 才删原片）")
     else:
         print("  去水印  : 跳过（默认不执行；确需去水印请加 --dewatermark）")
+
+    # 千川规格是提交素材的硬性要求，所以默认执行；只有显式 --no-qianchuan 才跳过。
+    print("  千川规格: " + ("跳过（--no-qianchuan）" if args.no_qianchuan
+                            else "执行，原地统一（文件名不变）"))
 
     # 目录非空时提醒，避免新旧产物混在一起
     out_root = PROJ / "带货短视频"
@@ -135,6 +147,12 @@ def main():
                        "--shard", f"{i}/{args.shards}"] + (["--no-replace"] if not args.replace else [])
                       for i in range(args.shards)]
         steps.append((shard_cmds, f"④ 去水印（{args.shards} 个进程并行）"))
+
+    # ⑤ 统一千川规格必须放在最后：它要保证最终交付的每一条都合规，
+    # 放在去水印之前的话，去水印重编码有可能改变参数。
+    if not args.no_qianchuan:
+        steps.append(([PY_SYS, str(SCRIPTS / "qianchuan.py"), "--jobs", str(args.jobs)],
+                      "⑤ 统一为巨量千川素材规格（原地覆盖，文件名不变）"))
 
     t0 = time.time()
     for item in steps:

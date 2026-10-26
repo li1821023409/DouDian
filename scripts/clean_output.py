@@ -7,7 +7,7 @@
 用法：
     python scripts/clean_output.py                # 预览：列出将删除的内容
     python scripts/clean_output.py --yes          # 真正删除
-    python scripts/clean_output.py --yes --keep-clean       # 只删原片，保留 *_clean.mp4
+    python scripts/clean_output.py --yes --keep-clean       # 只删原片，保留去水印版 / 千川版
     python scripts/clean_output.py --yes --keep "_下载清单.json" "_榜单对照_1-10.md"
 """
 import argparse
@@ -15,6 +15,9 @@ import shutil
 import sys
 import time
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from video_rules import is_derived  # noqa: E402
 
 DEFAULT_ROOT = Path(r"D:\Data\DouDian\带货短视频")
 # 护栏：这几个目录绝不允许被当作清理目标
@@ -34,8 +37,12 @@ def human(n):
 
 
 def is_clean_file(p: Path) -> bool:
-    """是否为去水印成品（新命名 *_去水印版.mp4，兼容旧的 *_clean.mp4）。"""
-    return p.stem.endswith("_去水印版") or p.stem.endswith("_clean")
+    """是否为流水线成品（去水印版 / 千川版，兼容旧的 _clean）。
+
+    --keep-clean 靠它区分「原片」和「成品」。新增派生后缀时改
+    video_rules.DERIVED_SUFFIXES，不要在这里加判断。
+    """
+    return is_derived(p)
 
 
 def collect(root: Path, keep_names, keep_clean):

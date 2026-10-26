@@ -9,6 +9,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from video_rules import is_original  # noqa: E402
+
 ROOT = Path(r"D:\Data\DouDian\带货短视频")
 OUT = Path(r"D:\Data\DouDian\video-cleaner\frames")
 
@@ -27,9 +30,7 @@ def white_text_signal(roi):
 
 def main():
     files = [f for f in sorted(glob.glob(str(ROOT / "*" / "*.mp4")))
-             if "_clean" not in os.path.basename(f)
-             and "_去水印版" not in os.path.basename(f)
-             and not f.endswith(".part.mp4")]
+             if is_original(f)]
     results = []
     for f in files:
         cap = cv2.VideoCapture(f)

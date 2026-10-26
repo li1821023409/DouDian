@@ -12,15 +12,16 @@ sys.path.insert(0, str(VC / "scripts"))
 import cv2  # noqa: E402
 from dewatermark import WatermarkDetector, TPL_GENERIC  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from video_rules import is_original  # noqa: E402
+
 ROOT = Path(r"D:\Data\DouDian\带货短视频")
 
 
 def main():
     det = WatermarkDetector(TPL_GENERIC)
     files = [f for f in sorted(glob.glob(str(ROOT / "*" / "*.mp4")))
-             if "_clean" not in os.path.basename(f)
-             and "_去水印版" not in os.path.basename(f)
-             and not f.endswith(".part.mp4")]
+             if is_original(f)]
     print(f"共 {len(files)} 个原片，阈值 {det.thresh}\n")
     print(f"{'商品':<14}{'文件':<9}{'分辨率':<14}{'分数':<8}{'位置':<14}判定")
     print("-" * 72)

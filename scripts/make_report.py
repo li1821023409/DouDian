@@ -4,8 +4,12 @@
 import glob
 import json
 import os
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+from video_rules import is_original  # noqa: E402
+
 OUT_ROOT = os.path.join(HERE, "..", "带货短视频")
 MF = os.path.join(OUT_ROOT, "_下载清单.json")
 MD = os.path.join(OUT_ROOT, "_榜单对照_1-10.md")
@@ -28,10 +32,9 @@ def main():
     tot_expect = tot_got = 0
     for it in items:
         dd = os.path.join(OUT_ROOT, it["dir"])
-        # 只数「原片」：排除去水印成品和编码中断留下的 .part 残片
+        # 只数「原片」：去水印版、千川版、编码中断的 .part 残片都不算
         got = len([f for f in glob.glob(os.path.join(dd, "*.mp4"))
-                   if "_去水印版" not in os.path.basename(f)
-                   and not f.endswith(".part.mp4")]) if os.path.isdir(dd) else 0
+                   if is_original(f)]) if os.path.isdir(dd) else 0
         exp = it["videos"]
         tot_expect += exp
         tot_got += got
