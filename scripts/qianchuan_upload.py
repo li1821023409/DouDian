@@ -32,6 +32,7 @@ import importlib.util
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -540,6 +541,17 @@ def collect(root: Path) -> list[Path]:
     return files
 
 
+def run_tagging() -> int:
+    """上传完顺手打标签（按商品名建标签 → 给对应视频打上）。
+
+    工作流里只跑 qianchuan_upload.py 一个命令，标签也不会漏；
+    不想打标签就加 --no-tag。
+    """
+    print(f"\n{'=' * 56}\n▶ 按商品打标签（qianchuan_tag.py）\n{'=' * 56}", flush=True)
+    return subprocess.run([sys.executable, str(SCRIPTS / "qianchuan_tag.py")],
+                          cwd=str(PROJ)).returncode
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="巨量千川视频库批量上传")
     ap.add_argument("--root", default=str(ROOT), help="视频根目录")
@@ -549,6 +561,8 @@ def main() -> int:
     ap.add_argument("--check-audit", action="store_true", help="只看审核状态")
     ap.add_argument("--limit", type=int, default=0, help="只传前 N 个（0=不限）")
     ap.add_argument("--timeout", type=int, default=1800, help="单批等待上限（秒）")
+    ap.add_argument("--no-tag", action="store_true",
+                    help="上传完不打标签（默认会调用 qianchuan_tag.py 按商品打标签）")
     args = ap.parse_args()
 
     root = Path(args.root)
@@ -587,6 +601,11 @@ def main() -> int:
     print(f"本地视频 {len(collect(root))} 个｜库里已有跳过 {skip} 个｜待上传 {len(todo)} 个")
     if not todo:
         print("没有需要上传的视频。")
+        if not args.no_tag:
+            # 库里已有素材不代表标签打过：这里顺手补一次
+            if run_tagging() != 0:
+                print("⚠ 打标签失败，可单独重跑：qianchuan_tag.py")
+                return 2
         return 0
 
     total_mb = sum(p.stat().st_size for p in todo) / 1048576
@@ -682,8 +701,15 @@ def main() -> int:
     if failed:
         for f in failed[:8]:
             print(f"  ✗ {Path(f['file']).name}：{f['reason']}")
-        return 1
-    return 0
+
+    # 上传完顺手打标签：工作流里只跑这一个脚本，标签也不会漏
+    if done and not args.no_tag:
+        if run_tagging() != 0:
+            print("⚠ 上传成功，但打标签失败（详见上面的输出）。"
+                  "可单独重跑：qianchuan_tag.py")
+            return 2
+
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

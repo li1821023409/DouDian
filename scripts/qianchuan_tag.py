@@ -194,26 +194,37 @@ def create_tag(sess, page: int, name: str) -> bool:
 # --------------------------------------------------------------------------
 # 视频库：勾选 + 批量添加标签
 # --------------------------------------------------------------------------
-TICK_ROWS_CODE = r"""
-const want = new Set(__NAMES__);
-let hit = 0;
-[...document.querySelectorAll("tbody tr")].forEach(r => {
-  const m = (r.innerText || "").match(/([^\s]+\.mp4)/);
-  if (!m || !want.has(m[1])) return;
-  const box = r.querySelector("input[type=checkbox]");
-  if (box && !box.checked) box.click();
-  if (box) hit++;
-});
-return String(hit);
+# 勾选必须**一行一次 evaluate**：一次调用里连点多个 checkbox，React 会重渲染整表，
+# 后面的点击落在已脱离文档的旧节点上等于没点（实测连点 3 行只选中 1 行；
+# 逐次点击则 3 行全中）。这就是最初误判「视频库只能单选」的原因。
+CLICK_ROW_CODE = r"""
+const r = [...document.querySelectorAll("tbody tr")][__I__];
+if (!r) return "no-row";
+const b = r.querySelector("input[type=checkbox]");
+if (!b) return "no-box";
+if (!b.checked) b.click();
+return b.checked ? "on" : "off";
 """
 
-CLEAR_SELECTION_CODE = r"""
-let n = 0;
-[...document.querySelectorAll("tbody tr")].forEach(r => {
-  const box = r.querySelector("input[type=checkbox]");
-  if (box && box.checked) { box.click(); n++; }
+ROW_INDEX_CODE = r"""
+const want = new Set(__NAMES__);
+const out = [];
+[...document.querySelectorAll("tbody tr")].forEach((r, i) => {
+  const m = (r.innerText || "").match(/([^\s]+\.mp4)/);
+  if (m && want.has(m[1])) out.push([i, m[1]]);
 });
-return String(n);
+return JSON.stringify(out);
+"""
+
+CHECKED_CODE = r"""
+return String([...document.querySelectorAll("tbody tr input[type=checkbox]")].filter(b => b.checked).length);
+"""
+
+CLICK_FIRST_CHECKED_CODE = r"""
+const b = [...document.querySelectorAll("tbody tr input[type=checkbox]")].filter(x => x.checked)[0];
+if (!b) return "none";
+b.click();
+return "off";
 """
 
 OPEN_BATCH_TAG_CODE = r"""
@@ -231,15 +242,17 @@ const lay = [...document.querySelectorAll("[class*=modal],[class*=Modal],[class*
   .sort((a, b) => b.getBoundingClientRect().height - a.getBoundingClientRect().height)[0];
 if (!lay) return JSON.stringify({open: false});
 const t = (lay.innerText || "").replace(/\s+/g, " ");
-const m = t.match(/已选\s*\((\d+)\s*\/\s*(\d+)\)/);
-// 标签项是 li.ovui-cascader-panel__selection-item，文字挂在 li 上（label 里面是空的）
+// 整个文档里找「已选择 N 个视频」：单选时这行不出现（改成「素材名称」了）
+const body = (document.body.innerText || "").replace(/\s+/g, " ");
+const mv = body.match(/已选择\s*(\d+)\s*个视频/);
+const mt = t.match(/已选\s*\((\d+)\s*\/\s*(\d+)\)/);
 const skip = new Set(["标签列表", "标签管理", "选择标签"]);
 const tags = [...lay.querySelectorAll("li,label")]
   .map(l => (l.innerText || "").trim())
   .filter(x => x && !skip.has(x));
-return JSON.stringify({open: true, selected: Number(m ? m[1] : 0),
-                       cap: Number(m ? m[2] : 0), tags: [...new Set(tags)],
-                       text: t.slice(0, 120)});
+return JSON.stringify({open: true, videos: Number(mv ? mv[1] : 0),
+                       selected: Number(mt ? mt[1] : 0), cap: Number(mt ? mt[2] : 0),
+                       tags: [...new Set(tags)], text: t.slice(0, 160)});
 """
 
 TICK_TAG_CODE = r"""
@@ -248,12 +261,20 @@ const lay = [...document.querySelectorAll("[class*=modal],[class*=Modal],[class*
   .filter(e => e.getBoundingClientRect().height > 80)
   .sort((a, b) => b.getBoundingClientRect().height - a.getBoundingClientRect().height)[0];
 if (!lay) return "no-dialog";
-const items = [...lay.querySelectorAll("li,label")]
-  .filter(l => (l.innerText || "").trim() === tag);
-if (!items.length) return "no-tag";
-const box = items[0].querySelector("input[type=checkbox]");
-if (box && !box.checked) box.click();
-return (box && box.checked) ? "checked" : "unchecked";
+// 标签项一般在弹窗里；但弹层有可能挂在 modal 之外（cascader 的 popper），
+// 所以先在弹窗内找，找不到再全文档找可见项。
+const pick = (root) => [...root.querySelectorAll("li,label")]
+  .filter(l => (l.innerText || "").trim() === tag && l.getBoundingClientRect().width > 0)[0];
+let item = pick(lay) || pick(document);
+if (!item) return "no-tag";
+if (item.tagName === "LI") {
+  const lab = item.querySelector("label");
+  if (lab) item = lab;
+}
+const box = item.querySelector("input[type=checkbox]") || item;
+if (box.type === "checkbox" && !box.checked) box.click();
+const ok = box.type === "checkbox" ? box.checked : true;
+return ok ? "checked" : "unchecked";
 """
 
 CONFIRM_BATCH_CODE = r"""
@@ -267,6 +288,57 @@ if (b.disabled) return "disabled";
 b.click();
 return "ok";
 """
+
+BATCH_TAG_CELL_CODE = r"""
+const want = new Set(__NAMES__);
+const ths = [...document.querySelectorAll("thead th")].map(t => (t.innerText || "").trim());
+const idx = ths.indexOf("标签");
+const out = {};
+[...document.querySelectorAll("tbody tr")].forEach(r => {
+  const m = (r.innerText || "").match(/([^\s]+\.mp4)/);
+  if (!m || !want.has(m[1])) return;
+  const tds = [...r.querySelectorAll("td")];
+  const cell = idx >= 0 && tds[idx] ? (tds[idx].innerText || "").replace(/\s+/g, " ").trim() : "";
+  out[m[1]] = out[m[1]] ? out[m[1]] + "||" + cell : cell;
+});
+return JSON.stringify(out);
+"""
+
+
+def checked_count(sess, page: int) -> int:
+    return int((ev(sess, page, CHECKED_CODE) or "0").strip() or 0)
+
+
+def clear_selection(sess, page: int) -> int:
+    """逐个取消勾选（一次点多个会打在失效节点上）。"""
+    n = 0
+    for _ in range(60):
+        if not checked_count(sess, page):
+            break
+        ev(sess, page, CLICK_FIRST_CHECKED_CODE)
+        time.sleep(0.45)
+        n += 1
+    return n
+
+
+def select_on_page(sess, page: int, files: list[str]) -> int:
+    """勾选当前页里属于 files 的行，返回实际勾上的行数。"""
+    raw = ev(sess, page, ROW_INDEX_CODE.replace("__NAMES__", L(files))) or "[]"
+    try:
+        pairs = json.loads(raw)
+    except json.JSONDecodeError:
+        return 0
+    hit = 0
+    for idx, fname in pairs:
+        for _ in range(2):
+            r = ev(sess, page, CLICK_ROW_CODE.replace("__I__", str(idx)))
+            if r == "on":
+                hit += 1
+                break
+            time.sleep(0.4)
+        time.sleep(0.55)
+    return hit
+
 
 def tag_cells(sess, page: int, names: list[str], tries: int = 5) -> dict[str, str]:
     """读每行的「标签」列文字。
@@ -290,30 +362,17 @@ def tag_cells(sess, page: int, names: list[str], tries: int = 5) -> dict[str, st
     return {}
 
 
-BATCH_TAG_CELL_CODE = r"""
-const want = new Set(__NAMES__);
-const ths = [...document.querySelectorAll("thead th")].map(t => (t.innerText || "").trim());
-const idx = ths.indexOf("标签");
-const out = {};
-[...document.querySelectorAll("tbody tr")].forEach(r => {
-  const m = (r.innerText || "").match(/([^\s]+\.mp4)/);
-  if (!m || !want.has(m[1])) return;
-  const tds = [...r.querySelectorAll("td")];
-  const cell = idx >= 0 && tds[idx] ? (tds[idx].innerText || "").replace(/\s+/g, " ").trim() : "";
-  out[m[1]] = out[m[1]] ? out[m[1]] + "||" + cell : cell;
-});
-return JSON.stringify(out);
-"""
+def page_names(sess, page: int) -> list[str]:
+    return (qc.read_stable(sess, page) or {}).get("names") or []
 
 
-def find_page_of(sess, page: int, fname: str, max_pages: int = 10):
-    """这个文件在第几页（找不到返回 None）。"""
+def goto_file_page(sess, page: int, fname: str, max_pages: int = 10):
+    """翻到该文件所在的页，返回页码或 None。"""
     qc.goto_page(sess, page, 1)
     time.sleep(2)
     pageno = 1
     while pageno <= max_pages:
-        d = qc.read_stable(sess, page)
-        names = d.get("names") or []
+        names = page_names(sess, page)
         if fname in names:
             return pageno
         if len(names) < PAGE_SIZE:
@@ -325,46 +384,52 @@ def find_page_of(sess, page: int, fname: str, max_pages: int = 10):
     return None
 
 
-def tag_one(sess, page: int, fname: str, tag: str) -> str:
-    """给单个视频加标签。
-
-    视频库的勾选是**单选**（实测连点 3 个 checkbox，页面仍是「已选1个」，
-    弹窗里也只显示一个素材名），所以只能一条一条来，不能一次批量勾 9 个。
-    """
-    pageno = find_page_of(sess, page, fname)
-    if pageno is None:
-        return "not-found"
-    ev(sess, page, CLEAR_SELECTION_CODE)
-    time.sleep(0.8)
-    hit = int(ev(sess, page, TICK_ROWS_CODE.replace("__NAMES__", L([fname]))).strip() or 0)
+def apply_batch(sess, page: int, files: list[str], tag: str) -> tuple[str, int]:
+    """勾选当前页命中的 files → 添加标签 → 确认。返回 (状态, 实际作用视频数)。"""
+    clear_selection(sess, page)
+    hit = select_on_page(sess, page, files)
     if not hit:
-        return "tick-fail"
-    time.sleep(1.2)
+        return "not-on-page", 0
 
     r = ev(sess, page, OPEN_BATCH_TAG_CODE)
     if r != "ok":
-        return f"open-fail:{r}"
+        return f"open-fail:{r}", 0
     time.sleep(2.2)
 
     st = json.loads(ev(sess, page, BATCH_MODAL_CODE))
     if not st.get("open"):
-        return "no-modal"
+        return "no-modal", 0
     if tag not in st.get("tags", []):
-        ev(sess, page, CLOSE_MODAL_CODE)
-        return "tag-missing"
+        # 标签面板可能是异步加载的：等一会再看一次
+        time.sleep(1.5)
+        st = json.loads(ev(sess, page, BATCH_MODAL_CODE))
+        if tag not in st.get("tags", []):
+            print(f"    ⚠ 弹窗里没找到标签「{tag}」，现有：{st.get('tags')}")
+            print(f"      弹窗文本：{st.get('text', '')[:100]}")
+            ev(sess, page, CLOSE_MODAL_CODE)
+            return "tag-missing", 0
+    videos = int(st.get("videos") or 0)
 
     r = ev(sess, page, TICK_TAG_CODE.replace("__TAG__", L(tag)))
     if r != "checked":
         ev(sess, page, CLOSE_MODAL_CODE)
-        return f"tick-tag-fail:{r}"
+        return f"tick-tag-fail:{r}", 0
 
     r = ev(sess, page, CONFIRM_BATCH_CODE)
     if r != "ok":
         ev(sess, page, CLOSE_MODAL_CODE)
-        return f"confirm-fail:{r}"
-    time.sleep(2.5)
-    ev(sess, page, CLEAR_SELECTION_CODE)
-    return "ok"
+        return f"confirm-fail:{r}", 0
+    time.sleep(3)
+    clear_selection(sess, page)
+    return "ok", videos
+
+
+def tag_one(sess, page: int, fname: str, tag: str) -> str:
+    """单条兜底：翻到该文件所在页，只勾它，再批量添加标签。"""
+    if goto_file_page(sess, page, fname) is None:
+        return "not-found"
+    r, n = apply_batch(sess, page, [fname], tag)
+    return r if r != "ok" or n else "not-applied"
 
 
 def reload_library(sess, page: int, wait: float = 7.0) -> None:
@@ -372,6 +437,68 @@ def reload_library(sess, page: int, wait: float = 7.0) -> None:
     url = (ev(sess, page, "return location.href;") or LIB_URL).strip().strip('"')
     sess.call("navigate", {"page": page, "url": url if url.startswith("http") else LIB_URL})
     time.sleep(wait)
+
+
+def verify_files(sess, page: int, files: list[str], tag: str) -> dict[str, str]:
+    """刷新后逐页回读「标签」列，返回 {文件: 该列文字}。"""
+    reload_library(sess, page)
+    cells: dict[str, str] = {}
+    qc.goto_page(sess, page, 1)
+    time.sleep(2)
+    pageno = 1
+    while pageno <= 10:
+        cells.update(tag_cells(sess, page, files))
+        if all(tag in (cells.get(f) or "") for f in files):
+            break
+        if len(page_names(sess, page)) < PAGE_SIZE:
+            break
+        if qc.goto_page(sess, page, pageno + 1) != "ok":
+            break
+        pageno += 1
+        time.sleep(2.5)
+    return cells
+
+
+def tag_files(sess, page: int, files: list[str], tag: str, verbose=True) -> list[dict]:
+    """给一个商品的所有视频打标签：先按页批量，再对漏掉的逐条补。"""
+    bad: list[dict] = []
+    qc.goto_page(sess, page, 1)
+    time.sleep(2)
+    pageno = 1
+    while pageno <= 10:
+        present = [f for f in files if f in page_names(sess, page)]
+        if present:
+            r, n = apply_batch(sess, page, present, tag)
+            if verbose:
+                print(f"  第 {pageno} 页批量：{r}，作用 {n}/{len(present)} 条")
+            if r != "ok":
+                bad.extend({"file": f, "reason": r} for f in present)
+        if len(page_names(sess, page)) < PAGE_SIZE:
+            break
+        if qc.goto_page(sess, page, pageno + 1) != "ok":
+            break
+        pageno += 1
+        time.sleep(2.5)
+
+    # 回读核对 + 单条补打
+    cells = verify_files(sess, page, files, tag)
+    missing = [f for f in files if tag not in (cells.get(f) or "")]
+    if missing and verbose:
+        print(f"  核对后仍缺 {len(missing)} 条，逐条补打")
+    for fname in missing:
+        r = tag_one(sess, page, fname, tag)
+        if verbose:
+            print(f"    补：{fname[-9:]}  {r}")
+        if r != "ok":
+            bad.append({"file": fname, "reason": r})
+
+    if missing:
+        cells = verify_files(sess, page, files, tag)
+        for fname in missing:
+            if tag not in (cells.get(fname) or ""):
+                if not any(b["file"] == fname for b in bad):
+                    bad.append({"file": fname, "reason": f"标签列未显示（{cells.get(fname, '缺行')}）"})
+    return bad
 
 
 # --------------------------------------------------------------------------
@@ -460,40 +587,23 @@ def main() -> int:
             failed.append({"tag": tag, "product": folder, "reason": "标签不存在"})
             continue
         print(f"\n打标签：{tag}（{folder}，{len(files)} 个视频）")
-        ok_files, bad = [], []
         if args.skip_tag:
             print("  [--skip-tag] 跳过打标签，只核对")
+            bad = []
         else:
-            for i, fname in enumerate(files, 1):
-                r = tag_one(sess, page, fname, tag)
-                print(f"  [{i}/{len(files)}] {fname[-9:]}  {r}")
-                if r == "ok":
-                    ok_files.append(fname)
-                else:
-                    bad.append({"file": fname, "reason": r})
+            bad = tag_files(sess, page, files, tag)
 
-        # 提交后表格不自动刷新，重新加载再回读「标签」列
-        reload_library(sess, page)
-        cells = {}
-        pageno = 1
-        while pageno <= 10:
-            cells.update(tag_cells(sess, page, files))
-            if all(tag in (cells.get(f) or "") for f in files):
-                break
-            if qc.goto_page(sess, page, pageno + 1) != "ok":
-                break
-            pageno += 1
-            time.sleep(2.5)
-
+        cells = verify_files(sess, page, files, tag)
         landed = [f for f in files if tag in (cells.get(f) or "")]
-        miss = [f for f in files if f not in landed]
-        for f in miss:
-            bad.append({"file": f, "reason": f"标签列未显示（{cells.get(f, '缺行')}）"})
         if landed:
             done.append({"tag": tag, "product": folder, "videos": len(landed), "files": landed})
         print(f"  核对：{len(landed)}/{len(files)} 行标签列已显示「{tag}」")
-        if bad:
-            failed.extend([{"tag": tag, **b} for b in bad])
+        # 以「标签列回读」为唯一真相：过程中报的错只要最后打上了就不算失败
+        reasons = {b["file"]: b["reason"] for b in bad}
+        for f in files:
+            if f not in landed:
+                failed.append({"tag": tag, "file": f,
+                               "reason": reasons.get(f, f"标签列未显示（{cells.get(f, '缺行')}）")})
 
     REPORT.write_text(json.dumps({
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
