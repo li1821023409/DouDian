@@ -6,6 +6,11 @@
 表现为页面正常显示商品列表，但 `<td p[itemid]>` 属性不存在，
 于是 fetch_rank.py 抓到 0 个商品，整条流水线白跑。
 
+【根治】跑一次 `scripts\\install_extension.py` 把启动参数固化进快捷方式，
+        以后浏览器每次打开就自动带插件，本脚本的修复分支基本用不上了。
+        本脚本只用一条只读接口判断插件在不在（CDP 9110 的 /json/list 能列出
+        扩展的 service_worker），在就直接通过，不会重复挂载。
+
 检测与处理分三种情况：
   1. 插件源目录缺失        → 报错，提示从 git 恢复（真的没装）
   2. 源在但页面无注入      → 调 fix_extension.ps1 重新挂载 + 刷新页面（被拦截）
@@ -53,6 +58,23 @@ def check_cdp():
         return d.get("Browser", "?")
     except Exception:
         return None
+
+
+def ext_loaded():
+    """扩展是否已经在浏览器里跑起来了 —— 读 CDP 的目标列表，纯只读。
+
+    chrome-extension://<id> 的 service_worker 出现即视为已加载。
+    启动参数 --load-extension 加载的、以及 loadUnpacked 挂上的，这里都能看到。
+    """
+    try:
+        d = json.loads(_open_no_proxy(CDP + "/json/list", timeout=6))
+    except Exception:
+        return None                      # 查不到（CDP 没开）→ 交给调用方决定
+    for t in d:
+        url = (t.get("url") or "")
+        if url.startswith(f"chrome-extension://{EXT_ID}/"):
+            return True
+    return False
 
 
 def load_cvr():
@@ -143,8 +165,17 @@ def main():
     # 用于流水线第一步：扩展加载好之后，compass_video_rank 新开的页面会自动注入，
     # 不需要刷新，也就不会把「短视频榜」重置回「总榜」。
     if args.load:
+        alive = ext_loaded()
+        if alive:
+            print("✓ 扩展已在运行（无需重复挂载）")
+            print("  后续新开的页面会自动注入，跳过修复步骤")
+            return 0
+        if alive is None:
+            print("! 读不到 CDP 目标列表，按未加载处理")
         if not run_fix():
             print("✗ 扩展加载失败")
+            print("  根治办法：跑一次 python scripts\\install_extension.py，"
+                  "把 --load-extension 固化进快捷方式")
             return 5
         print("✓ 扩展已加载（后续新开的页面会自动注入）")
         return 0
